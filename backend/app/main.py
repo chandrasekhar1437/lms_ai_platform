@@ -115,6 +115,13 @@ class StudyPlanRequest(BaseModel):
     course_id: str
     user_id: str
 
+class CourseApprovalRequest(BaseModel):
+    decision: str  # "approved" or "rejected"
+    comment: Optional[str] = ""
+
+class RoleUpdateRequest(BaseModel):
+    role: str  # "student", "instructor", "admin"
+
 # =====================================================================
 # HELPER FUNCTIONS
 # =====================================================================
@@ -448,7 +455,7 @@ async def grade_quiz(course_id: str, payload: QuizSubmission):
     raise HTTPException(status_code=404, detail="Quiz not found")
 
 # =====================================================================
-# AI TUTOR & FORUM ENDPOINTS (PRD Section 8.5 - WEEK 3)
+# AI TUTOR & FORUM ENDPOINTS (PRD Section 8.5)
 # =====================================================================
 
 @app.get("/api/v1/courses/{course_id}/forum")
@@ -594,18 +601,10 @@ async def get_user_streak(token: str = Depends(oauth2_scheme)):
         "current_streak": streak.get("current_streak", 1) if streak else 1,
         "last_active_date": streak.get("last_active_date", str(date.today())) if streak else str(date.today())
     }
-    
-    
-# =====================================================================
-# ADMIN & GOVERNANCE ENDPOINTS (PRD Section 8.7 - WEEK 4)
-# =====================================================================
 
-class CourseApprovalRequest(BaseModel):
-    decision: str  # "approved" or "rejected"
-    comment: Optional[str] = ""
-
-class RoleUpdateRequest(BaseModel):
-    role: str  # "student", "instructor", "admin"
+# =====================================================================
+# ADMIN & GOVERNANCE ENDPOINTS (PRD Section 8.7)
+# =====================================================================
 
 @app.get("/api/v1/admin/users")
 async def admin_list_users(token: str = Depends(oauth2_scheme)):
