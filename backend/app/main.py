@@ -26,8 +26,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_jwt_key_change_in_production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-# Resend Email API Key (HTTP Port 443 avoids outbound SMTP blocks on Render)
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+# Brevo Email API Key (Uses HTTP Port 443 to avoid SMTP port blocks)
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__ident="2b")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -113,35 +113,39 @@ def send_otp_email(recipient_email: str, otp_code: str, subject: str):
     print(f"SENDING OTP TO {recipient_email}: {otp_code}")
     print(f"==========================================\n")
     
-    if not RESEND_API_KEY:
-        print("RESEND_API_KEY is not set in Environment Variables. Skipping email send.")
+    if not BREVO_API_KEY:
+        print("BREVO_API_KEY is not set in Environment Variables. Skipping email send.")
         return
 
-    url = "https://api.resend.com/emails"
+    url = "https://api.brevo.com/v3/smtp/email"
     headers = {
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json"
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json"
     }
     payload = {
-        "from": "LMS Platform <onboarding@resend.dev>",
-        "to": [recipient_email],
+        "sender": {
+            "name": "LMS Platform",
+            "email": "chandrasekharnunna983@gmail.com"
+        },
+        "to": [{"email": recipient_email}],
         "subject": subject,
-        "html": f"<p>Hello,</p><p>Your verification OTP code is: <strong>{otp_code}</strong></p><p>This code is valid for 10 minutes.</p>"
+        "htmlContent": f"<html><body><p>Hello,</p><p>Your verification OTP code is: <strong>{otp_code}</strong></p><p>This code is valid for 10 minutes.</p></body></html>"
     }
     
     try:
         response = requests.post(url, json=payload, headers=headers)
-        if response.status_code in [200, 201]:
-            print("Email sent successfully via Resend API!")
+        if response.status_code in [200, 201, 202]:
+            print("Email sent successfully via Brevo API!")
         else:
-            print(f"Resend API Error: {response.status_code} - {response.text}")
+            print(f"Brevo API Error: {response.status_code} - {response.text}")
     except Exception as e:
-        print(f"Failed to send email via API: {e}")
+        print(f"Failed to send email via Brevo API: {e}")
 
 # Health Check
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "message": "Backend running with MongoDB Atlas and Resend Email API"}
+    return {"status": "ok", "message": "Backend running with MongoDB Atlas and Brevo Email API"}
 
 # Auth Endpoints
 @app.post("/api/v1/auth/register")
