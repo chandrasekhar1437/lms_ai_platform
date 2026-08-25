@@ -2,11 +2,9 @@
 import uuid
 import shutil
 import random
-import smtplib
+import requests
 from datetime import datetime, timedelta, date
 from typing import Optional, List
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, status, File, UploadFile, Query
@@ -20,7 +18,7 @@ from jose import JWTError, jwt
 
 from app.db import db
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # JWT Configuration
@@ -28,11 +26,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_jwt_key_change_in_production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-# Gmail SMTP SSL Configuration (Port 465 avoids outbound blocks on Render)
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "chandrasekharnunna983@gmail.com")
-SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "vofsvoaqipswczfo")
+# Resend Email API Key (HTTP Port 443 avoids outbound SMTP blocks on Render)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__ident="2b")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -73,25 +68,11 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
-class CourseCreate(BaseModel):
-    title: str
-    category: str
-    difficulty: str
-    description: str
-
-class ModuleCreate(BaseModel):
-    title: str
-
 class NoteCreate(BaseModel):
     user_id: str
     lecture_id: str
     timestamp_seconds: int
     content: str
-
-class BookmarkCreate(BaseModel):
-    user_id: str
-    lecture_id: str
-    timestamp_seconds: int
 
 class ChatMessage(BaseModel):
     message: str
@@ -108,9 +89,6 @@ class ForumPostCreate(BaseModel):
     user_id: str
     user_name: str
     content: str
-
-class CourseApprovalPayload(BaseModel):
-    status: str
 
 # Helper Functions
 def get_password_hash(password: str) -> str:
@@ -135,32 +113,35 @@ def send_otp_email(recipient_email: str, otp_code: str, subject: str):
     print(f"SENDING OTP TO {recipient_email}: {otp_code}")
     print(f"==========================================\n")
     
-    if not SENDER_EMAIL or not SENDER_PASSWORD:
-        print("SMTP Credentials missing. Skipping email sending.")
+    if not RESEND_API_KEY:
+        print("RESEND_API_KEY is not set in Environment Variables. Skipping email send.")
         return
-        
+
+    url = "https://api.resend.com/emails"
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "from": "LMS Platform <onboarding@resend.dev>",
+        "to": [recipient_email],
+        "subject": subject,
+        "html": f"<p>Hello,</p><p>Your verification OTP code is: <strong>{otp_code}</strong></p><p>This code is valid for 10 minutes.</p>"
+    }
+    
     try:
-        msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = recipient_email
-        msg['Subject'] = subject
-        
-        body = f"Hello,\n\nYour 6-digit OTP verification code is: {otp_code}\n\nThis code is valid for 10 minutes.\n\nBest regards,\nLMS Platform Team"
-        msg.attach(MIMEText(body, 'plain'))
-        
-        # Using SMTP_SSL with port 465 prevents network unreachable errors on cloud platforms
-        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, recipient_email, msg.as_string())
-        server.quit()
-        print("Email sent successfully!")
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code in [200, 201]:
+            print("Email sent successfully via Resend API!")
+        else:
+            print(f"Resend API Error: {response.status_code} - {response.text}")
     except Exception as e:
-        print(f"Failed to send email via SMTP: {e}")
+        print(f"Failed to send email via API: {e}")
 
 # Health Check
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "message": "Backend running with MongoDB Atlas and Gmail SMTP"}
+    return {"status": "ok", "message": "Backend running with MongoDB Atlas and Resend Email API"}
 
 # Auth Endpoints
 @app.post("/api/v1/auth/register")
@@ -251,7 +232,7 @@ async def reset_password(payload: ResetPasswordRequest):
     await db.users.update_one({"email": payload.email}, {"$set": {"password_hash": hashed_password}, "$unset": {"reset_otp": ""}})
     return {"status": "success", "message": "Password reset successfully. Please log in."}
 
-# Course Catalog & Admin Governance
+# Course Catalog
 @app.get("/api/v1/courses")
 async def list_courses(category: Optional[str] = None, difficulty: Optional[str] = None, search: Optional[str] = None, status: Optional[str] = "approved"):
     query = {}
@@ -285,7 +266,7 @@ async def stream_video(file_name: str):
         raise HTTPException(status_code=404, detail="Video file not found")
     return FileResponse(file_path, media_type="video/mp4")
 
-# Notes, Forum, Progress & Analytics
+# Notes, Forum, Progress & AI
 @app.post("/api/v1/notes")
 async def add_note(payload: NoteCreate):
     note_doc = payload.dict()
@@ -322,7 +303,7 @@ async def summarize_lecture(lecture_id: str):
 async def ai_tutor_chat(course_id: str, payload: ChatMessage):
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     reply = f"Regarding '{payload.message}': This topic covers foundational async execution models and schema handling."
-    return {"reply": reply, "sources": [{"course_title": course.get("title", "LMS Course")}]}
+    return {"reply": reply, "sources": [{"course_title": course.get("title", "LMS Course") if course else "LMS Course"}]}
 
 @app.post("/api/v1/courses/{course_id}/progress")
 async def update_progress(course_id: str, payload: ProgressUpdate):
@@ -365,6 +346,8 @@ async def get_progress(course_id: str, user_id: str):
 @app.post("/api/v1/courses/{course_id}/quizzes/grade")
 async def grade_quiz(course_id: str, payload: QuizSubmission):
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
     for mod in course.get("modules", []):
         for quiz in mod.get("quizzes", []):
             if quiz.get("quiz_id") == payload.quiz_id:
