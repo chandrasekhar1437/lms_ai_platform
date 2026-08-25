@@ -45,7 +45,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pydantic Schemas
+# =====================================================================
+# PYDANTIC SCHEMAS
+# =====================================================================
+
 class UserRegister(BaseModel):
     full_name: str
     email: EmailStr
@@ -90,7 +93,21 @@ class ForumPostCreate(BaseModel):
     user_name: str
     content: str
 
-# Helper Functions
+class AssignmentCreate(BaseModel):
+    course_id: str
+    title: str
+    instructions: str
+    due_date: str
+
+class QuizCreate(BaseModel):
+    module_id: str
+    title: str
+    questions: List[dict]
+
+# =====================================================================
+# HELPER FUNCTIONS
+# =====================================================================
+
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
@@ -142,12 +159,15 @@ def send_otp_email(recipient_email: str, otp_code: str, subject: str):
     except Exception as e:
         print(f"Failed to send email via Brevo API: {e}")
 
-# Health Check
+
+# =====================================================================
+# HEALTH CHECK & AUTH ENDPOINTS (PRD Section 8.1)
+# =====================================================================
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "message": "Backend running with MongoDB Atlas and Brevo Email API"}
 
-# Auth Endpoints
 @app.post("/api/v1/auth/register")
 async def register(payload: UserRegister):
     existing_user = await db.users.find_one({"email": payload.email})
@@ -236,7 +256,10 @@ async def reset_password(payload: ResetPasswordRequest):
     await db.users.update_one({"email": payload.email}, {"$set": {"password_hash": hashed_password}, "$unset": {"reset_otp": ""}})
     return {"status": "success", "message": "Password reset successfully. Please log in."}
 
-# Course Catalog
+# =====================================================================
+# COURSE CATALOG ENDPOINTS (PRD Section 8.2)
+# =====================================================================
+
 @app.get("/api/v1/courses")
 async def list_courses(category: Optional[str] = None, difficulty: Optional[str] = None, search: Optional[str] = None, status: Optional[str] = "approved"):
     query = {}
@@ -270,44 +293,55 @@ async def stream_video(file_name: str):
         raise HTTPException(status_code=404, detail="Video file not found")
     return FileResponse(file_path, media_type="video/mp4")
 
-# Notes, Forum, Progress & AI
+# =====================================================================
+# ENROLLMENT & PROGRESS ENDPOINTS (PRD Section 8.3)
+# =====================================================================
+
+@app.post("/api/v1/courses/{course_id}/enroll")
+async def enroll_course(course_id: str, token: str = Depends(oauth2_scheme)):
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    user_id = payload.get("sub")
+    
+    existing = await db.enrollments.find_one({"user_id": user_id, "course_id": course_id})
+    if existing:
+        return {"status": "already_enrolled", "enrollment_id": str(existing["_id"])}
+        
+    enrollment_doc = {
+        "user_id": user_id,
+        "course_id": course_id,
+        "enrolled_at": datetime.utcnow(),
+        "progress_percent": 0.0
+    }
+    result = await db.enrollments.insert_one(enrollment_doc)
+    return {"status": "success", "enrollment_id": str(result.inserted_id)}
+
+@app.get("/api/v1/enrollments/me")
+async def get_my_enrollments(token: str = Depends(oauth2_scheme)):
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    user_id = payload.get("sub")
+    
+    cursor = db.enrollments.find({"user_id": user_id})
+    enrollments = await cursor.to_list(length=100)
+    
+    results = []
+    for enc in enrollments:
+        c_id = enc.get("course_id")
+        course = await db.courses.find_one({"_id": ObjectId(c_id)}) if ObjectId.is_valid(c_id) else None
+        results.append({
+            "enrollment_id": str(enc["_id"]),
+            "course_id": c_id,
+            "course_title": course.get("title", "Unknown") if course else "Course",
+            "progress_percent": enc.get("progress_percent", 0.0),
+            "enrolled_at": enc.get("enrolled_at")
+        })
+    return results
+
 @app.post("/api/v1/notes")
 async def add_note(payload: NoteCreate):
     note_doc = payload.dict()
     note_doc["created_at"] = datetime.utcnow()
     await db.notes.insert_one(note_doc)
     return {"status": "success"}
-
-@app.get("/api/v1/courses/{course_id}/forum")
-async def get_forum_posts(course_id: str):
-    cursor = db.forum_posts.find({"course_id": course_id}).sort("created_at", -1)
-    posts = await cursor.to_list(length=100)
-    return [format_doc(p) for p in posts]
-
-@app.post("/api/v1/courses/{course_id}/forum")
-async def add_forum_post(course_id: str, payload: ForumPostCreate):
-    post_doc = payload.dict()
-    post_doc["course_id"] = course_id
-    post_doc["created_at"] = datetime.utcnow()
-    await db.forum_posts.insert_one(post_doc)
-    return {"status": "success"}
-
-@app.post("/api/v1/lectures/{lecture_id}/summarize")
-async def summarize_lecture(lecture_id: str):
-    return {
-        "summary": "This lecture introduces asynchronous Python database drivers and FastAPI execution structures.",
-        "key_points": [
-            "Async processing prevents non-blocking thread lock.",
-            "Motor is the primary async client for MongoDB.",
-            "FastAPI handles execution schemas with Pydantic validation."
-        ]
-    }
-
-@app.post("/api/v1/courses/{course_id}/chat")
-async def ai_tutor_chat(course_id: str, payload: ChatMessage):
-    course = await db.courses.find_one({"_id": ObjectId(course_id)})
-    reply = f"Regarding '{payload.message}': This topic covers foundational async execution models and schema handling."
-    return {"reply": reply, "sources": [{"course_title": course.get("title", "LMS Course") if course else "LMS Course"}]}
 
 @app.post("/api/v1/courses/{course_id}/progress")
 async def update_progress(course_id: str, payload: ProgressUpdate):
@@ -347,6 +381,45 @@ async def get_progress(course_id: str, user_id: str):
         "current_streak": current_streak
     }
 
+# =====================================================================
+# ASSIGNMENTS & QUIZZES ENDPOINTS (PRD Section 8.4)
+# =====================================================================
+
+@app.post("/api/v1/assignments")
+async def create_assignment(payload: AssignmentCreate):
+    doc = payload.dict()
+    doc["created_at"] = datetime.utcnow()
+    res = await db.assignments.insert_one(doc)
+    return {"status": "success", "assignment_id": str(res.inserted_id)}
+
+@app.post("/api/v1/assignments/{assignment_id}/submit")
+async def submit_assignment(assignment_id: str, user_id: str, file: UploadFile = File(...)):
+    file_ext = os.path.splitext(file.filename)[1]
+    saved_filename = f"{uuid.uuid4()}{file_ext}"
+    file_path = os.path.join(UPLOAD_DIR, saved_filename)
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    submission_doc = {
+        "assignment_id": assignment_id,
+        "user_id": user_id,
+        "file_url": f"/api/v1/videos/{saved_filename}",
+        "submitted_at": datetime.utcnow(),
+        "grade": None,
+        "feedback": ""
+    }
+    res = await db.submissions.insert_one(submission_doc)
+    return {"status": "success", "submission_id": str(res.inserted_id)}
+
+@app.post("/api/v1/quizzes")
+async def create_quiz(payload: QuizCreate):
+    doc = payload.dict()
+    doc["is_ai_generated"] = False
+    doc["created_at"] = datetime.utcnow()
+    res = await db.quizzes.insert_one(doc)
+    return {"status": "success", "quiz_id": str(res.inserted_id)}
+
 @app.post("/api/v1/courses/{course_id}/quizzes/grade")
 async def grade_quiz(course_id: str, payload: QuizSubmission):
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
@@ -363,3 +436,63 @@ async def grade_quiz(course_id: str, payload: QuizSubmission):
                         "message": "Correct answer!" if is_correct else "Incorrect. Try again!"
                     }
     raise HTTPException(status_code=404, detail="Quiz not found")
+# =====================================================================
+# AI TUTOR & FORUM ENDPOINTS (PRD Section 8.5)
+# =====================================================================
+
+@app.get("/api/v1/courses/{course_id}/forum")
+async def get_forum_posts(course_id: str):
+    cursor = db.forum_posts.find({"course_id": course_id}).sort("created_at", -1)
+    posts = await cursor.to_list(length=100)
+    return [format_doc(p) for p in posts]
+
+@app.post("/api/v1/courses/{course_id}/forum")
+async def add_forum_post(course_id: str, payload: ForumPostCreate):
+    post_doc = payload.dict()
+    post_doc["course_id"] = course_id
+    post_doc["created_at"] = datetime.utcnow()
+    await db.forum_posts.insert_one(post_doc)
+    return {"status": "success"}
+
+@app.post("/api/v1/lectures/{lecture_id}/summarize")
+async def summarize_lecture(lecture_id: str):
+    return {
+        "summary": "This lecture introduces asynchronous Python database drivers and FastAPI execution structures.",
+        "key_points": [
+            "Async processing prevents non-blocking thread lock.",
+            "Motor is the primary async client for MongoDB.",
+            "FastAPI handles execution schemas with Pydantic validation."
+        ]
+    }
+
+@app.post("/api/v1/courses/{course_id}/chat")
+async def ai_tutor_chat(course_id: str, payload: ChatMessage):
+    course = await db.courses.find_one({"_id": ObjectId(course_id)})
+    reply = f"Regarding '{payload.message}': This topic covers foundational async execution models and schema handling."
+    return {"reply": reply, "sources": [{"course_title": course.get("title", "LMS Course") if course else "LMS Course"}]}
+
+# =====================================================================
+# RECOMMENDATIONS & GAMIFICATION (PRD Section 8.6)
+# =====================================================================
+
+@app.get("/api/v1/users/me/badges")
+async def get_user_badges(token: str = Depends(oauth2_scheme)):
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    user_id = payload.get("sub")
+    
+    badges = [
+        {"id": 1, "name": "First Step", "description": "Enrolled in your first course", "icon_url": "/icons/badge1.png"},
+        {"id": 2, "name": "7-Day Streak", "description": "Logged in for 7 consecutive days", "icon_url": "/icons/badge2.png"}
+    ]
+    return {"user_id": user_id, "badges": badges}
+
+@app.get("/api/v1/users/me/streak")
+async def get_user_streak(token: str = Depends(oauth2_scheme)):
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    user_id = payload.get("sub")
+    
+    streak = await db.streaks.find_one({"user_id": user_id})
+    return {
+        "current_streak": streak.get("current_streak", 1) if streak else 1,
+        "last_active_date": streak.get("last_active_date", str(date.today())) if streak else str(date.today())
+    }
