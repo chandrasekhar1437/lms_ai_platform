@@ -1,6 +1,7 @@
 ﻿import asyncio
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
+from passlib.context import CryptContext
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,10 +11,31 @@ MONGO_URL = os.getenv(
     "mongodb+srv://chandu14372:ch123456@chandu-coder.7gppjmr.mongodb.net/?appName=chandu-coder"
 )
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__ident="2b")
+
 async def seed_data():
     client = AsyncIOMotorClient(MONGO_URL)
     db = client.lms_database
 
+    # =====================================================================
+    # 1. SEED ADMIN USER
+    # =====================================================================
+    admin_doc = {
+        "full_name": "System Administrator",
+        "email": "admin@test.com",
+        "password_hash": pwd_context.hash("AdminPass123"),
+        "role": "admin",
+        "is_verified": True
+    }
+    
+    await db.users.update_one({"email": "admin@test.com"}, {"$set": admin_doc}, upsert=True)
+    print("--------------------------------------------------")
+    print("SUCCESS! Admin account seeded (admin@test.com / AdminPass123)")
+    print("--------------------------------------------------")
+
+    # =====================================================================
+    # 2. SEED COURSES
+    # =====================================================================
     await db.courses.delete_many({})
 
     sample_course = {
@@ -54,10 +76,9 @@ async def seed_data():
     }
 
     result = await db.courses.insert_one(sample_course)
+    print(f"SUCCESS! Course ID generated: {result.inserted_id}")
     print("--------------------------------------------------")
-    print(f"SUCCESS! Copy your generated Course ID below:")
-    print(f"{result.inserted_id}")
-    print("--------------------------------------------------")
+    
     client.close()
 
 if __name__ == "__main__":
