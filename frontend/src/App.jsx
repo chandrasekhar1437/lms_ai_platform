@@ -2,6 +2,9 @@
 import axios from "axios";
 import "./App.css";
 
+// Production Backend API URL deployed on Render
+const API_BASE_URL = "https://lms-ai-platform.onrender.com";
+
 function App() {
   const [user, setUser] = useState(null);
   const [authView, setAuthView] = useState("login"); // 'login', 'register', 'otp', 'forgot', 'reset'
@@ -32,11 +35,11 @@ function App() {
     { sender: "ai", text: "Hello! I am your AI Tutor. Ask me any question about this course!" }
   ]);
 
-  const [activeCourseId, setActiveCourseId] = useState("6a8d1716678e4d99fa5477ca");
+  const [activeCourseId, setActiveCourseId] = useState("6a8d00729f2a5c89afc33ccf");
 
   const fetchCatalog = () => {
     axios
-      .get(`http://127.0.0.1:8000/api/v1/courses?category=${selectedCategory}&difficulty=${selectedDifficulty}&search=${searchQuery}`)
+      .get(`${API_BASE_URL}/api/v1/courses?category=${selectedCategory}&difficulty=${selectedDifficulty}&search=${searchQuery}`)
       .then((res) => setCourses(res.data))
       .catch((err) => console.error(err));
   };
@@ -44,7 +47,7 @@ function App() {
   const fetchCourseTree = (courseId) => {
     setLoading(true);
     axios
-      .get(`http://127.0.0.1:8000/api/v1/courses/${courseId}/tree`)
+      .get(`${API_BASE_URL}/api/v1/courses/${courseId}/tree`)
       .then((res) => {
         setCourse(res.data);
         setLoading(false);
@@ -55,14 +58,14 @@ function App() {
   const fetchProgress = (userId, courseId) => {
     if (!userId || !courseId) return;
     axios
-      .get(`http://127.0.0.1:8000/api/v1/courses/${courseId}/progress/${userId}`)
+      .get(`${API_BASE_URL}/api/v1/courses/${courseId}/progress/${userId}`)
       .then((res) => setProgress(res.data))
       .catch((err) => console.error(err));
   };
 
   const fetchForum = (courseId) => {
     axios
-      .get(`http://127.0.0.1:8000/api/v1/courses/${courseId}/forum`)
+      .get(`${API_BASE_URL}/api/v1/courses/${courseId}/forum`)
       .then((res) => setForumPosts(res.data))
       .catch((err) => console.error(err));
   };
@@ -83,7 +86,7 @@ function App() {
     e.preventDefault();
     if (authView === "register") {
       axios
-        .post("http://127.0.0.1:8000/api/v1/auth/register", { full_name: fullName, email, password, role })
+        .post(`${API_BASE_URL}/api/v1/auth/register`, { full_name: fullName, email, password, role })
         .then((res) => {
           alert(res.data.message);
           setAuthView("otp");
@@ -91,7 +94,7 @@ function App() {
         .catch((err) => alert(err.response?.data?.detail || "Registration Failed"));
     } else {
       axios
-        .post("http://127.0.0.1:8000/api/v1/auth/login", { email, password })
+        .post(`${API_BASE_URL}/api/v1/auth/login`, { email, password })
         .then((res) => {
           localStorage.setItem("token", res.data.access_token);
           localStorage.setItem("user", JSON.stringify(res.data.user));
@@ -104,7 +107,7 @@ function App() {
   const handleVerifyOTP = (e) => {
     e.preventDefault();
     axios
-      .post("http://127.0.0.1:8000/api/v1/auth/verify-otp", { email, otp })
+      .post(`${API_BASE_URL}/api/v1/auth/verify-otp`, { email, otp })
       .then((res) => {
         localStorage.setItem("token", res.data.access_token);
         localStorage.setItem("user", JSON.stringify(res.data.user));
@@ -117,7 +120,7 @@ function App() {
   const handleForgotPassword = (e) => {
     e.preventDefault();
     axios
-      .post("http://127.0.0.1:8000/api/v1/auth/forgot-password", { email })
+      .post(`${API_BASE_URL}/api/v1/auth/forgot-password`, { email })
       .then((res) => {
         alert(res.data.message);
         setAuthView("reset");
@@ -128,7 +131,7 @@ function App() {
   const handleResetPassword = (e) => {
     e.preventDefault();
     axios
-      .post("http://127.0.0.1:8000/api/v1/auth/reset-password", { email, otp, new_password: newPassword })
+      .post(`${API_BASE_URL}/api/v1/auth/reset-password`, { email, otp, new_password: newPassword })
       .then((res) => {
         alert(res.data.message);
         setAuthView("login");
@@ -144,7 +147,7 @@ function App() {
   const handleMarkComplete = (lectureId) => {
     if (!user?._id) return alert("Please log in to track progress.");
     axios
-      .post(`http://127.0.0.1:8000/api/v1/courses/${activeCourseId}/progress`, {
+      .post(`${API_BASE_URL}/api/v1/courses/${activeCourseId}/progress`, {
         user_id: user._id,
         lecture_id: lectureId,
       })
@@ -155,7 +158,7 @@ function App() {
   const handleAddNote = (lectureId) => {
     if (!noteText.trim()) return;
     axios
-      .post(`http://127.0.0.1:8000/api/v1/notes`, {
+      .post(`${API_BASE_URL}/api/v1/notes`, {
         user_id: user._id,
         lecture_id: lectureId,
         timestamp_seconds: 45,
@@ -171,7 +174,7 @@ function App() {
     e.preventDefault();
     if (!forumInput.trim()) return;
     axios
-      .post(`http://127.0.0.1:8000/api/v1/courses/${activeCourseId}/forum`, {
+      .post(`${API_BASE_URL}/api/v1/courses/${activeCourseId}/forum`, {
         user_id: user._id,
         user_name: user.full_name,
         content: forumInput
@@ -183,7 +186,7 @@ function App() {
   };
 
   const handleSummarize = (lectureId) => {
-    axios.post(`http://127.0.0.1:8000/api/v1/lectures/${lectureId}/summarize`).then((res) => {
+    axios.post(`${API_BASE_URL}/api/v1/lectures/${lectureId}/summarize`).then((res) => {
       setAiSummary(res.data);
     });
   };
@@ -196,7 +199,7 @@ function App() {
     setChatInput("");
 
     axios
-      .post(`http://127.0.0.1:8000/api/v1/courses/${activeCourseId}/chat`, { message: userMsg })
+      .post(`${API_BASE_URL}/api/v1/courses/${activeCourseId}/chat`, { message: userMsg })
       .then((res) => {
         setChatMessages((prev) => [...prev, { sender: "ai", text: res.data.reply }]);
       });
@@ -433,7 +436,7 @@ function App() {
                               key={optIdx}
                               onClick={() => {
                                 axios
-                                  .post(`http://127.0.0.1:8000/api/v1/courses/${activeCourseId}/quizzes/grade`, {
+                                  .post(`${API_BASE_URL}/api/v1/courses/${activeCourseId}/quizzes/grade`, {
                                     quiz_id: quiz.quiz_id,
                                     selected_option: optIdx,
                                   })
