@@ -15,6 +15,8 @@ function App() {
   const [role, setRole] = useState("student");
   const [otp, setOtp] = useState("");
 
+  const [activeTab, setActiveTab] = useState("learn"); // 'learn', 'create_course', 'admin_panel'
+
   const [courses, setCourses] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedDifficulty, setSelectedDifficulty] = useState("All");
@@ -22,6 +24,17 @@ function App() {
 
   const [course, setCourse] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  // Instructor Form States
+  const [newCourseTitle, setNewCourseTitle] = useState("");
+  const [newCourseDesc, setNewCourseDesc] = useState("");
+  const [newCourseCat, setNewCourseCat] = useState("Computer Science");
+  const [newCourseDiff, setNewCourseDiff] = useState("Intermediate");
+
+  // Admin View States
+  const [allUsers, setAllUsers] = useState([]);
+  const [pendingCourses, setPendingCourses] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
 
   const [progress, setProgress] = useState({ completed_lectures: [], percentage: 0, current_streak: 1 });
   const [noteText, setNoteText] = useState("");
@@ -35,16 +48,27 @@ function App() {
     { sender: "ai", text: "Hello! I am your AI Tutor. Ask me any question about this course!" }
   ]);
 
-  const [activeCourseId, setActiveCourseId] = useState(" 6a8d78cd6ab0a586f1007d5c");
+  const [activeCourseId, setActiveCourseId] = useState("");
+
+  const getAuthHeader = () => {
+    const token = localStorage.getItem("token");
+    return token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+  };
 
   const fetchCatalog = () => {
     axios
       .get(`${API_BASE_URL}/api/v1/courses?category=${selectedCategory}&difficulty=${selectedDifficulty}&search=${searchQuery}`)
-      .then((res) => setCourses(res.data))
+      .then((res) => {
+        setCourses(res.data);
+        if (res.data.length > 0 && !activeCourseId) {
+          setActiveCourseId(res.data[0]._id);
+        }
+      })
       .catch((err) => console.error(err));
   };
 
   const fetchCourseTree = (courseId) => {
+    if (!courseId) return;
     setLoading(true);
     axios
       .get(`${API_BASE_URL}/api/v1/courses/${courseId}/tree`)
@@ -64,10 +88,20 @@ function App() {
   };
 
   const fetchForum = (courseId) => {
+    if (!courseId) return;
     axios
       .get(`${API_BASE_URL}/api/v1/courses/${courseId}/forum`)
       .then((res) => setForumPosts(res.data))
       .catch((err) => console.error(err));
+  };
+
+  // Admin Data Fetchers
+  const fetchAdminData = () => {
+    if (user?.role !== "admin") return;
+    const config = getAuthHeader();
+    axios.get(`${API_BASE_URL}/api/v1/admin/users`, config).then((res) => setAllUsers(res.data)).catch(console.error);
+    axios.get(`${API_BASE_URL}/api/v1/admin/courses/pending`, config).then((res) => setPendingCourses(res.data)).catch(console.error);
+    axios.get(`${API_BASE_URL}/api/v1/admin/analytics/overview`, config).then((res) => setAnalytics(res.data)).catch(console.error);
   };
 
   useEffect(() => {
@@ -78,9 +112,21 @@ function App() {
       fetchProgress(parsedUser._id, activeCourseId);
     }
     fetchCatalog();
-    fetchCourseTree(activeCourseId);
-    fetchForum(activeCourseId);
+  }, []);
+
+  useEffect(() => {
+    if (activeCourseId) {
+      fetchCourseTree(activeCourseId);
+      fetchForum(activeCourseId);
+      if (user?._id) fetchProgress(user._id, activeCourseId);
+    }
   }, [activeCourseId, selectedCategory, selectedDifficulty, searchQuery]);
+
+  useEffect(() => {
+    if (activeTab === "admin_panel") {
+      fetchAdminData();
+    }
+  }, [activeTab]);
 
   const handleAuth = (e) => {
     e.preventDefault();
@@ -104,6 +150,7 @@ function App() {
         .catch((err) => alert(err.response?.data?.detail || "Authentication Failed"));
     }
   };
+
   const handleVerifyOTP = (e) => {
     e.preventDefault();
     axios
@@ -142,6 +189,47 @@ function App() {
   const handleLogout = () => {
     localStorage.clear();
     setUser(null);
+    setActiveTab("learn");
+  };
+  // Instructor Action
+  const handleCreateCourse = (e) => {
+    e.preventDefault();
+    axios
+      .post(
+        `${API_BASE_URL}/api/v1/courses`,
+        { title: newCourseTitle, description: newCourseDesc, category: newCourseCat, difficulty: newCourseDiff },
+        getAuthHeader()
+      )
+      .then((res) => {
+        alert("Course created successfully and submitted for admin review!");
+        setNewCourseTitle("");
+        setNewCourseDesc("");
+        setActiveTab("learn");
+        fetchCatalog();
+      })
+      .catch((err) => alert(err.response?.data?.detail || "Failed to create course"));
+  };
+
+  // Admin Actions
+  const handleApproveCourse = (courseId, decision) => {
+    axios
+      .post(`${API_BASE_URL}/api/v1/admin/courses/${courseId}/approve`, { decision, comment: "Reviewed by admin" }, getAuthHeader())
+      .then(() => {
+        alert(`Course ${decision}!`);
+        fetchAdminData();
+        fetchCatalog();
+      })
+      .catch((err) => alert(err.response?.data?.detail || "Approval action failed"));
+  };
+
+  const handleUpdateRole = (targetUserId, newRole) => {
+    axios
+      .put(`${API_BASE_URL}/api/v1/admin/users/${targetUserId}/role`, { role: newRole }, getAuthHeader())
+      .then(() => {
+        alert(`User role updated to ${newRole}`);
+        fetchAdminData();
+      })
+      .catch((err) => alert(err.response?.data?.detail || "Role update failed"));
   };
 
   const handleMarkComplete = (lectureId) => {
@@ -205,7 +293,7 @@ function App() {
       });
   };
 
-  // Dedicated Mobile-Friendly Authentication Screen
+  // Authentication Screen
   if (!user) {
     return (
       <div className="app-container auth-page-wrapper">
@@ -314,7 +402,7 @@ function App() {
     );
   }
 
-  // Mobile-Responsive LMS Platform Dashboard
+  // Dashboard Interface
   return (
     <div className="app-container">
       <div className="card-wrapper">
@@ -323,173 +411,287 @@ function App() {
         <div className="navbar">
           <h2 className="nav-title">LMS Platform</h2>
           <div>
-            <span className="user-badge">🔥 {progress.current_streak} Day Streak | 👤 <strong>{user.full_name}</strong></span>
+            <span className="user-badge">
+              🔥 {progress.current_streak} Day Streak | 👤 <strong>{user.full_name}</strong> ({user.role.toUpperCase()})
+            </span>
             <button onClick={handleLogout} className="btn-danger">Logout</button>
           </div>
         </div>
 
-        {/* Catalog Search & Filtering */}
-        <div className="catalog-bar">
-          <input type="text" placeholder="Search courses..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="input-field flex-2" />
-          <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="input-field flex-1">
-            <option value="All">All Categories</option>
-            <option value="Computer Science">Computer Science</option>
-          </select>
-          <select value={selectedDifficulty} onChange={(e) => setSelectedDifficulty(e.target.value)} className="input-field flex-1">
-            <option value="All">All Difficulties</option>
-            <option value="Intermediate">Intermediate</option>
-          </select>
-        </div>
+        {/* Role-Based Navigation Bar */}
+        <div style={{ display: "flex", gap: "10px", margin: "16px 0" }}>
+          <button 
+            onClick={() => setActiveTab("learn")} 
+            className={`btn-secondary ${activeTab === "learn" ? "btn-primary" : ""}`}
+          >
+            📚 Student Catalog
+          </button>
 
-        {/* Course Selection Cards */}
-        <div className="course-card-scroll">
-          {courses.map((c) => (
-            <div
-              key={c._id}
-              onClick={() => setActiveCourseId(c._id)}
-              className={`course-item-card ${activeCourseId === c._id ? "active" : ""}`}
+          {/* INSTRUCTOR & ADMIN PERMISSION: Course Creation */}
+          {(user.role === "instructor" || user.role === "admin") && (
+            <button 
+              onClick={() => setActiveTab("create_course")} 
+              className={`btn-secondary ${activeTab === "create_course" ? "btn-primary" : ""}`}
             >
-              <strong className="course-card-title">{c.title}</strong>
-              <div className="course-card-cat">{c.category}</div>
-            </div>
-          ))}
+              ➕ Create Course
+            </button>
+          )}
+
+          {/* ADMIN PERMISSION: Governance & Analytics */}
+          {user.role === "admin" && (
+            <button 
+              onClick={() => setActiveTab("admin_panel")} 
+              className={`btn-secondary ${activeTab === "admin_panel" ? "btn-primary" : ""}`}
+            >
+              ⚙️ Admin Panel
+            </button>
+          )}
         </div>
 
-        {/* Course Tree & Content Render */}
-        {loading || !course ? (
-          <div>Loading course structure...</div>
-        ) : (
-          <div>
-            <h1>{course.title}</h1>
-            <p>{course.description}</p>
-
-            {/* Progress Analytics */}
-            <div className="progress-container">
-              <div className="progress-header">
-                <span>Course Completion Progress</span>
-                <span>{progress.percentage}%</span>
-              </div>
-              <div className="progress-track">
-                <div className="progress-fill" style={{ width: `${progress.percentage}%` }}></div>
-              </div>
+        {/* TAB 1: STUDENT CATALOG & PLAYER */}
+        {activeTab === "learn" && (
+          <>
+            <div className="catalog-bar">
+              <input type="text" placeholder="Search courses..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="input-field flex-2" />
+              <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="input-field flex-1">
+                <option value="All">All Categories</option>
+                <option value="Computer Science">Computer Science</option>
+              </select>
+              <select value={selectedDifficulty} onChange={(e) => setSelectedDifficulty(e.target.value)} className="input-field flex-1">
+                <option value="All">All Difficulties</option>
+                <option value="Intermediate">Intermediate</option>
+              </select>
             </div>
 
-            <h2>Course Modules</h2>
-            
-            {course.modules?.map((mod) => (
-              <details key={mod.module_id} open className="module-card">
-                <summary className="module-title">{mod.title}</summary>
+            <div className="course-card-scroll">
+              {courses.map((c) => (
+                <div
+                  key={c._id}
+                  onClick={() => setActiveCourseId(c._id)}
+                  className={`course-item-card ${activeCourseId === c._id ? "active" : ""}`}
+                >
+                  <strong className="course-card-title">{c.title}</strong>
+                  <div className="course-card-cat">{c.category}</div>
+                </div>
+              ))}
+            </div>
+
+            {loading || !course ? (
+              <div>Loading course structure...</div>
+            ) : (
+              <div>
+                <h1>{course.title}</h1>
+                <p>{course.description}</p>
+
+                <div className="progress-container">
+                  <div className="progress-header">
+                    <span>Course Completion Progress</span>
+                    <span>{progress.percentage}%</span>
+                  </div>
+                  <div className="progress-track">
+                    <div className="progress-fill" style={{ width: `${progress.percentage}%` }}></div>
+                  </div>
+                </div>
+
+                <h2>Course Modules</h2>
                 
-                <div style={{ marginTop: "12px" }}>
-                  <h4 style={{ margin: "8px 0" }}>Lectures:</h4>
-                  {mod.lectures?.map((lec) => {
-                    const isCompleted = progress.completed_lectures?.includes(lec.lecture_id);
-                    return (
-                      <div key={lec.lecture_id} className="lecture-card">
-                        <div className="lecture-card-header">
-                          <span>🎥 {lec.title}</span>
-                          {isCompleted && <span style={{ color: "#059669" }}>✓ Watched</span>}
-                        </div>
+                {course.modules?.map((mod) => (
+                  <details key={mod.module_id} open className="module-card">
+                    <summary className="module-title">{mod.title}</summary>
+                    
+                    <div style={{ marginTop: "12px" }}>
+                      <h4 style={{ margin: "8px 0" }}>Lectures:</h4>
+                      {mod.lectures?.map((lec) => {
+                        const isCompleted = progress.completed_lectures?.includes(lec.lecture_id);
+                        return (
+                          <div key={lec.lecture_id} className="lecture-card">
+                            <div className="lecture-card-header">
+                              <span>🎥 {lec.title}</span>
+                              {isCompleted && <span style={{ color: "#059669" }}>✓ Watched</span>}
+                            </div>
 
-                        {lec.video_url && (
-                          <video controls>
-                            <source src={lec.video_url} type="video/mp4" />
-                          </video>
-                        )}
+                            {lec.video_url && (
+                              <video controls>
+                                <source src={lec.video_url} type="video/mp4" />
+                              </video>
+                            )}
 
-                        <div className="action-row">
-                          <button
-                            onClick={() => handleMarkComplete(lec.lecture_id)}
-                            disabled={isCompleted}
-                            className="btn-secondary"
-                          >
-                            {isCompleted ? "✓ Completed" : "Mark as Watched"}
-                          </button>
-                          <button onClick={() => handleSummarize(lec.lecture_id)} className="btn-primary btn-purple">
-                            ✨ AI Summary
-                          </button>
-                        </div>
+                            <div className="action-row">
+                              <button
+                                onClick={() => handleMarkComplete(lec.lecture_id)}
+                                disabled={isCompleted}
+                                className="btn-secondary"
+                              >
+                                {isCompleted ? "✓ Completed" : "Mark as Watched"}
+                              </button>
+                              <button onClick={() => handleSummarize(lec.lecture_id)} className="btn-primary btn-purple">
+                                ✨ AI Summary
+                              </button>
+                            </div>
 
-                        <div className="action-row">
-                          <input
-                            type="text"
-                            placeholder="Add timestamped note..."
-                            value={noteText}
-                            onChange={(e) => setNoteText(e.target.value)}
-                            className="input-field flex-1"
-                          />
-                          <button onClick={() => handleAddNote(lec.lecture_id)} className="btn-secondary">Save Note</button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                            <div className="action-row">
+                              <input
+                                type="text"
+                                placeholder="Add timestamped note..."
+                                value={noteText}
+                                onChange={(e) => setNoteText(e.target.value)}
+                                className="input-field flex-1"
+                              />
+                              <button onClick={() => handleAddNote(lec.lecture_id)} className="btn-secondary">Save Note</button>
+                            </div>
+                          </div>
+                        );
+                      })}
 
-                  <h4 style={{ margin: "14px 0 8px 0" }}>Quizzes:</h4>
-                  {mod.quizzes?.map((quiz) => (
-                    <div key={quiz.quiz_id} className="quiz-card">
-                      <div style={{ fontWeight: "bold", color: "#6b21a8" }}>📝 {quiz.title}</div>
-                      {quiz.questions?.map((q, qIdx) => (
-                        <div key={qIdx} style={{ fontSize: "13px", marginTop: "6px" }}>
-                          <p style={{ fontWeight: "600", margin: "4px 0" }}>{q.question_text}</p>
-                          {q.options?.map((opt, optIdx) => (
-                            <button
-                              key={optIdx}
-                              onClick={() => {
-                                axios
-                                  .post(`${API_BASE_URL}/api/v1/courses/${activeCourseId}/quizzes/grade`, {
-                                    quiz_id: quiz.quiz_id,
-                                    selected_option: optIdx,
-                                  })
-                                  .then((res) => alert(res.data.message));
-                              }}
-                              className="quiz-option-btn"
-                              style={{ marginTop: "4px" }}
-                            >
-                              {optIdx + 1}. {typeof opt === "object" ? opt.text || JSON.stringify(opt) : String(opt)}
-                            </button>
+                      <h4 style={{ margin: "14px 0 8px 0" }}>Quizzes:</h4>
+                      {mod.quizzes?.map((quiz) => (
+                        <div key={quiz.quiz_id} className="quiz-card">
+                          <div style={{ fontWeight: "bold", color: "#6b21a8" }}>📝 {quiz.title}</div>
+                          {quiz.questions?.map((q, qIdx) => (
+                            <div key={qIdx} style={{ fontSize: "13px", marginTop: "6px" }}>
+                              <p style={{ fontWeight: "600", margin: "4px 0" }}>{q.question_text}</p>
+                              {q.options?.map((opt, optIdx) => (
+                                <button
+                                  key={optIdx}
+                                  onClick={() => {
+                                    axios
+                                      .post(`${API_BASE_URL}/api/v1/courses/${activeCourseId}/quizzes/grade`, {
+                                        quiz_id: quiz.quiz_id,
+                                        selected_option: optIdx,
+                                      })
+                                      .then((res) => alert(res.data.message));
+                                  }}
+                                  className="quiz-option-btn"
+                                  style={{ marginTop: "4px" }}
+                                >
+                                  {optIdx + 1}. {typeof opt === "object" ? opt.text || JSON.stringify(opt) : String(opt)}
+                                </button>
+                              ))}
+                            </div>
                           ))}
                         </div>
                       ))}
                     </div>
-                  ))}
-                </div>
-              </details>
-            ))}
+                  </details>
+                ))}
 
-            {aiSummary && (
-              <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f3e8ff", borderRadius: "8px" }}>
-                <h3 style={{ margin: "0 0 6px 0", color: "#6b21a8", fontSize: "15px" }}>🤖 AI Lesson Summary</h3>
-                <p style={{ fontSize: "13px", color: "#4c1d95" }}>{aiSummary.summary}</p>
+                {aiSummary && (
+                  <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f3e8ff", borderRadius: "8px" }}>
+                    <h3 style={{ margin: "0 0 6px 0", color: "#6b21a8", fontSize: "15px" }}>🤖 AI Lesson Summary</h3>
+                    <p style={{ fontSize: "13px", color: "#4c1d95" }}>{aiSummary.summary}</p>
+                  </div>
+                )}
+
+                <div className="forum-section">
+                  <h3>💬 Discussion Forum</h3>
+                  <form onSubmit={handleAddForumPost} style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+                    <input
+                      type="text"
+                      placeholder="Ask a question..."
+                      value={forumInput}
+                      onChange={(e) => setForumInput(e.target.value)}
+                      className="input-field flex-1"
+                    />
+                    <button type="submit" className="btn-secondary">Post</button>
+                  </form>
+                  <div style={{ marginTop: "10px" }}>
+                    {forumPosts.map((post) => (
+                      <div key={post._id} className="forum-post-card">
+                        <strong style={{ fontSize: "12px" }}>{post.user_name}</strong>
+                        <div style={{ fontSize: "13px" }}>{post.content}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+            )}
+          </>
+        )}
+
+        {/* TAB 2: INSTRUCTOR COURSE AUTHORING */}
+        {activeTab === "create_course" && (user.role === "instructor" || user.role === "admin") && (
+          <div style={{ padding: "16px", backgroundColor: "#f8fafc", borderRadius: "8px", marginTop: "12px" }}>
+            <h2>Create New Course</h2>
+            <form onSubmit={handleCreateCourse}>
+              <div className="form-group">
+                <input type="text" placeholder="Course Title" value={newCourseTitle} onChange={(e) => setNewCourseTitle(e.target.value)} required className="input-field" />
+              </div>
+              <div className="form-group">
+                <textarea placeholder="Course Description" value={newCourseDesc} onChange={(e) => setNewCourseDesc(e.target.value)} required className="input-field" rows={4} />
+              </div>
+              <div className="form-group" style={{ display: "flex", gap: "10px" }}>
+                <select value={newCourseCat} onChange={(e) => setNewCourseCat(e.target.value)} className="input-field flex-1">
+                  <option value="Computer Science">Computer Science</option>
+                  <option value="Data Science">Data Science</option>
+                  <option value="Web Development">Web Development</option>
+                </select>
+                <select value={newCourseDiff} onChange={(e) => setNewCourseDiff(e.target.value)} className="input-field flex-1">
+                  <option value="Beginner">Beginner</option>
+                  <option value="Intermediate">Intermediate</option>
+                  <option value="Advanced">Advanced</option>
+                </select>
+              </div>
+              <button type="submit" className="btn-primary auth-full-btn">Submit Course for Approval</button>
+            </form>
+          </div>
+        )}
+
+        {/* TAB 3: ADMIN GOVERNANCE PANEL */}
+        {activeTab === "admin_panel" && user.role === "admin" && (
+          <div style={{ padding: "16px", backgroundColor: "#f8fafc", borderRadius: "8px", marginTop: "12px" }}>
+            <h2>Platform Governance Dashboard</h2>
+
+            {/* Platform Metrics */}
+            {analytics && (
+              <div style={{ display: "flex", gap: "10px", margin: "16px 0" }}>
+                <div style={{ background: "#e0f2fe", padding: "12px", borderRadius: "6px", flex: 1 }}>
+                  <h3>Users</h3>
+                  <strong>{analytics.total_users}</strong>
+                </div>
+                <div style={{ background: "#dcfce7", padding: "12px", borderRadius: "6px", flex: 1 }}>
+                  <h3>Courses</h3>
+                  <strong>{analytics.total_courses}</strong>
+                </div>
+                <div style={{ background: "#fef3c7", padding: "12px", borderRadius: "6px", flex: 1 }}>
+                  <h3>Enrollments</h3>
+                  <strong>{analytics.total_enrollments}</strong>
+                </div>
               </div>
             )}
 
-            <div className="forum-section">
-              <h3>💬 Discussion Forum</h3>
-              <form onSubmit={handleAddForumPost} style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-                <input
-                  type="text"
-                  placeholder="Ask a question..."
-                  value={forumInput}
-                  onChange={(e) => setForumInput(e.target.value)}
-                  className="input-field flex-1"
-                />
-                <button type="submit" className="btn-secondary">Post</button>
-              </form>
-              <div style={{ marginTop: "10px" }}>
-                {forumPosts.map((post) => (
-                  <div key={post._id} className="forum-post-card">
-                    <strong style={{ fontSize: "12px" }}>{post.user_name}</strong>
-                    <div style={{ fontSize: "13px" }}>{post.content}</div>
+            {/* Pending Approvals */}
+            <h3>Pending Course Approvals</h3>
+            {pendingCourses.length === 0 ? <p style={{ fontSize: "13px" }}>No courses awaiting approval.</p> : (
+              pendingCourses.map((pc) => (
+                <div key={pc._id} style={{ padding: "10px", border: "1px solid #cbd5e1", borderRadius: "6px", marginBottom: "8px" }}>
+                  <strong>{pc.title}</strong> - {pc.category} ({pc.difficulty})
+                  <div style={{ marginTop: "6px" }}>
+                    <button onClick={() => handleApproveCourse(pc._id, "approved")} className="btn-primary" style={{ marginRight: "6px" }}>Approve</button>
+                    <button onClick={() => handleApproveCourse(pc._id, "rejected")} className="btn-danger">Reject</button>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
+              ))
+            )}
 
+            {/* User Governance */}
+            <h3 style={{ marginTop: "20px" }}>User Role Management</h3>
+            {allUsers.map((u) => (
+              <div key={u._id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #e2e8f0" }}>
+                <span>{u.full_name} ({u.email})</span>
+                <select value={u.role} onChange={(e) => handleUpdateRole(u._id, e.target.value)} className="input-field" style={{ width: "auto" }}>
+                  <option value="student">Student</option>
+                  <option value="instructor">Instructor</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            ))}
           </div>
         )}
+
       </div>
 
-      {/* Mobile-Adjusted AI Tutor Chat */}
+      {/* AI Tutor Floating Widget */}
       <div className="chat-widget">
         {!chatOpen ? (
           <button onClick={() => setChatOpen(true)} className="chat-trigger-btn">💬 Ask AI Tutor</button>
