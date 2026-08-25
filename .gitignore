@@ -22,3 +22,21 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Environment variables (Secrets)
+.env
+*.env
+
+# Python / Virtual Environments
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Node / Build artifacts
+node_modules/
+dist/
+build/
+
+# Uploads directory
+backend/uploads/*
+!backend/uploads/.gitkeep
