@@ -1,0 +1,443 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: #f9fafb;
+  color: #111827;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-container {
+  padding: 20px 12px;
+  min-height: 100vh;
+}
+
+.card-wrapper {
+  max-width: 800px;
+  margin: 0 auto;
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  position: relative;
+}
+
+/* Authentication Layout */
+.auth-page-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 85vh;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  background: #ffffff;
+  padding: 28px 20px;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e5e7eb;
+}
+
+.auth-card-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.auth-card-subtitle {
+  font-size: 13px;
+  color: #6b7280;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.auth-footer-text {
+  margin-top: 18px;
+  font-size: 13px;
+  color: #4b5563;
+  text-align: center;
+}
+
+.auth-full-btn {
+  width: 100%;
+  padding: 10px;
+  font-size: 15px;
+  margin-top: 8px;
+}
+
+/* Navigation Bar */
+.navbar {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+}
+
+.nav-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.user-badge {
+  margin-right: 8px;
+  color: #374151;
+  font-size: 13px;
+}
+
+/* Form Controls */
+.form-group {
+  margin-bottom: 12px;
+}
+
+.input-field {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.input-field:focus {
+  outline: 2px solid #2563eb;
+  border-color: transparent;
+}
+
+.flex-1 { flex: 1; }
+.flex-2 { flex: 2; }
+
+/* Catalog Search Bar & Cards */
+.catalog-bar {
+  margin-bottom: 16px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.course-card-scroll {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  margin-bottom: 20px;
+  padding-bottom: 6px;
+}
+
+.course-item-card {
+  padding: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 160px;
+  background-color: #ffffff;
+}
+
+.course-item-card.active {
+  border: 2px solid #2563eb;
+}
+
+.course-card-title {
+  font-size: 13px;
+  color: #111827;
+  display: block;
+}
+
+.course-card-cat {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+/* Buttons */
+.btn-primary {
+  padding: 8px 14px;
+  background-color: #10b981;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.btn-secondary {
+  padding: 8px 14px;
+  background-color: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.btn-danger {
+  padding: 6px 10px;
+  background-color: #ef4444;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn-purple { background-color: #8b5cf6; }
+
+.btn-link {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.action-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+/* Progress & Analytics */
+.progress-container {
+  margin-bottom: 20px;
+  padding: 14px;
+  background-color: #eff6ff;
+  border-radius: 8px;
+  border: 1px solid #bfdbfe;
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: #1e40af;
+  font-size: 13px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 10px;
+  background-color: #dbeafe;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: #2563eb;
+  transition: width 0.4s ease-in-out;
+}
+
+/* Module Tree */
+.module-card {
+  margin: 14px 0;
+  border: 1px solid #d1d5db;
+  padding: 14px;
+  border-radius: 6px;
+  background-color: #f3f4f6;
+}
+
+.module-title {
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 16px;
+  color: #1d4ed8;
+}
+
+.lecture-card {
+  margin: 10px 0;
+  padding: 12px;
+  background: #ffffff;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.lecture-card-header {
+  font-weight: bold;
+  margin-bottom: 6px;
+  color: #1f2937;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+}
+
+video {
+  width: 100%;
+  max-height: 220px;
+  border-radius: 4px;
+  background-color: #000;
+}
+
+/* Quizzes */
+.quiz-card {
+  padding: 10px;
+  background: #ffffff;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  margin-top: 8px;
+}
+
+.quiz-option-btn {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid #d1d5db;
+  background-color: #f9fafb;
+  color: #111827;
+  cursor: pointer;
+  font-size: 12px;
+  width: 100%;
+}
+
+/* Forum & AI Summary */
+.forum-section {
+  margin-top: 24px;
+  border-top: 2px solid #e5e7eb;
+  padding-top: 16px;
+}
+
+.forum-post-card {
+  padding: 8px 12px;
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+/* AI Chat Widget */
+.chat-widget {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 1000;
+}
+
+.chat-trigger-btn {
+  padding: 10px 16px;
+  background-color: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 50px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.chat-box {
+  width: 320px;
+  height: 380px;
+  background-color: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-header {
+  padding: 10px 14px;
+  background-color: #2563eb;
+  color: #ffffff;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chat-close-btn {
+  background: none;
+  border: none;
+  color: #ffffff;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.chat-body {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-bubble-user {
+  align-self: flex-end;
+  background-color: #2563eb;
+  color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  max-width: 85%;
+}
+
+.chat-bubble-ai {
+  align-self: flex-start;
+  background-color: #f3f4f6;
+  color: #1f2937;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  max-width: 85%;
+}
+
+.chat-footer {
+  padding: 8px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  gap: 6px;
+}
+
+/* Mobile-Responsive Enhancements */
+@media (max-width: 768px) {
+  .app-container {
+    padding: 10px 6px;
+  }
+
+  .card-wrapper {
+    padding: 14px;
+  }
+
+  .navbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .catalog-bar {
+    flex-direction: column;
+  }
+
+  .catalog-bar .input-field {
+    width: 100%;
+  }
+
+  .chat-box {
+    width: calc(100vw - 32px);
+    height: 360px;
+  }
+
+  .action-row {
+    flex-direction: column;
+  }
+
+  .action-row .btn-secondary,
+  .action-row .btn-primary {
+    width: 100%;
+  }
+}
