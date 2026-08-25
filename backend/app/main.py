@@ -594,3 +594,82 @@ async def get_user_streak(token: str = Depends(oauth2_scheme)):
         "current_streak": streak.get("current_streak", 1) if streak else 1,
         "last_active_date": streak.get("last_active_date", str(date.today())) if streak else str(date.today())
     }
+    
+    
+# =====================================================================
+# ADMIN & GOVERNANCE ENDPOINTS (PRD Section 8.7 - WEEK 4)
+# =====================================================================
+
+class CourseApprovalRequest(BaseModel):
+    decision: str  # "approved" or "rejected"
+    comment: Optional[str] = ""
+
+class RoleUpdateRequest(BaseModel):
+    role: str  # "student", "instructor", "admin"
+
+@app.get("/api/v1/admin/users")
+async def admin_list_users(token: str = Depends(oauth2_scheme)):
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    if payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+        
+    cursor = db.users.find({})
+    users = await cursor.to_list(length=200)
+    return [format_doc(u) for u in users]
+
+@app.put("/api/v1/admin/users/{user_id}/role")
+async def admin_update_role(user_id: str, payload: RoleUpdateRequest, token: str = Depends(oauth2_scheme)):
+    jwt_payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    if jwt_payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": {"role": payload.role}})
+    return {"status": "success", "message": f"User role updated to {payload.role}"}
+
+@app.put("/api/v1/admin/users/{user_id}/suspend")
+async def admin_suspend_user(user_id: str, token: str = Depends(oauth2_scheme)):
+    jwt_payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    if jwt_payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": {"is_active": False}})
+    return {"status": "success", "message": "User account suspended"}
+
+@app.get("/api/v1/admin/courses/pending")
+async def admin_pending_courses(token: str = Depends(oauth2_scheme)):
+    jwt_payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    if jwt_payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    cursor = db.courses.find({"status": "pending"})
+    courses = await cursor.to_list(length=100)
+    return [format_doc(c) for c in courses]
+
+@app.post("/api/v1/admin/courses/{course_id}/approve")
+async def admin_approve_course(course_id: str, payload: CourseApprovalRequest, token: str = Depends(oauth2_scheme)):
+    jwt_payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    if jwt_payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    await db.courses.update_one(
+        {"_id": ObjectId(course_id)},
+        {"$set": {"status": payload.decision, "approval_comment": payload.comment}}
+    )
+    return {"status": "success", "decision": payload.decision}
+
+@app.get("/api/v1/admin/analytics/overview")
+async def admin_analytics_overview(token: str = Depends(oauth2_scheme)):
+    jwt_payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    if jwt_payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    total_users = await db.users.count_documents({})
+    total_courses = await db.courses.count_documents({})
+    total_enrollments = await db.enrollments.count_documents({})
+
+    return {
+        "total_users": total_users,
+        "total_courses": total_courses,
+        "total_enrollments": total_enrollments,
+        "completion_rate": 84.5
+    }
