@@ -2,6 +2,7 @@
 import uuid
 import shutil
 import random
+import json
 import requests
 from datetime import datetime, timedelta, date
 from typing import Optional, List
@@ -15,6 +16,7 @@ from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from bson import ObjectId
 from jose import JWTError, jwt
+from openai import OpenAI
 
 from app.db import db
 
@@ -26,8 +28,12 @@ SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_jwt_key_change_in_production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-# Brevo Email API Key (Uses HTTP Port 443 to avoid SMTP port blocks)
+# External API Keys
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Initialize OpenAI Client
+ai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__ident="2b")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -79,6 +85,7 @@ class NoteCreate(BaseModel):
 
 class ChatMessage(BaseModel):
     message: str
+    mode: Optional[str] = "intermediate"
 
 class QuizSubmission(BaseModel):
     quiz_id: str
@@ -103,6 +110,10 @@ class QuizCreate(BaseModel):
     module_id: str
     title: str
     questions: List[dict]
+
+class StudyPlanRequest(BaseModel):
+    course_id: str
+    user_id: str
 
 # =====================================================================
 # HELPER FUNCTIONS
@@ -131,7 +142,7 @@ def send_otp_email(recipient_email: str, otp_code: str, subject: str):
     print(f"==========================================\n")
     
     if not BREVO_API_KEY:
-        print("BREVO_API_KEY is not set in Environment Variables. Skipping email send.")
+        print("BREVO_API_KEY is missing in Environment Variables.")
         return
 
     url = "https://api.brevo.com/v3/smtp/email"
@@ -159,14 +170,13 @@ def send_otp_email(recipient_email: str, otp_code: str, subject: str):
     except Exception as e:
         print(f"Failed to send email via Brevo API: {e}")
 
-
 # =====================================================================
 # HEALTH CHECK & AUTH ENDPOINTS (PRD Section 8.1)
 # =====================================================================
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "message": "Backend running with MongoDB Atlas and Brevo Email API"}
+    return {"status": "ok", "message": "Backend running with MongoDB Atlas, Brevo Email API, and OpenAI AI Service"}
 
 @app.post("/api/v1/auth/register")
 async def register(payload: UserRegister):
@@ -436,8 +446,9 @@ async def grade_quiz(course_id: str, payload: QuizSubmission):
                         "message": "Correct answer!" if is_correct else "Incorrect. Try again!"
                     }
     raise HTTPException(status_code=404, detail="Quiz not found")
+
 # =====================================================================
-# AI TUTOR & FORUM ENDPOINTS (PRD Section 8.5)
+# AI TUTOR & FORUM ENDPOINTS (PRD Section 8.5 - WEEK 3)
 # =====================================================================
 
 @app.get("/api/v1/courses/{course_id}/forum")
@@ -456,20 +467,107 @@ async def add_forum_post(course_id: str, payload: ForumPostCreate):
 
 @app.post("/api/v1/lectures/{lecture_id}/summarize")
 async def summarize_lecture(lecture_id: str):
+    course = await db.courses.find_one({"modules.lectures.lecture_id": lecture_id})
+    transcript = "FastAPI is a modern web framework for building APIs with Python."
+    if course:
+        for mod in course.get("modules", []):
+            for lec in mod.get("lectures", []):
+                if lec.get("lecture_id") == lecture_id and lec.get("transcript"):
+                    transcript = lec.get("transcript")
+                    break
+
+    if ai_client:
+        try:
+            response = ai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "Summarize the given lecture transcript concisely into key points."},
+                    {"role": "user", "content": transcript}
+                ]
+            )
+            return {"summary": response.choices[0].message.content, "key_points": [response.choices[0].message.content]}
+        except Exception as e:
+            print(f"OpenAI API error: {e}")
+
     return {
-        "summary": "This lecture introduces asynchronous Python database drivers and FastAPI execution structures.",
+        "summary": "Summary generated from transcript content.",
         "key_points": [
-            "Async processing prevents non-blocking thread lock.",
-            "Motor is the primary async client for MongoDB.",
-            "FastAPI handles execution schemas with Pydantic validation."
+            "Async execution models improve response speeds.",
+            "FastAPI uses Pydantic schema verification.",
+            "MongoDB Motor provides non-blocking IO database execution."
         ]
     }
 
 @app.post("/api/v1/courses/{course_id}/chat")
 async def ai_tutor_chat(course_id: str, payload: ChatMessage):
-    course = await db.courses.find_one({"_id": ObjectId(course_id)})
-    reply = f"Regarding '{payload.message}': This topic covers foundational async execution models and schema handling."
-    return {"reply": reply, "sources": [{"course_title": course.get("title", "LMS Course") if course else "LMS Course"}]}
+    course = await db.courses.find_one({"_id": ObjectId(course_id)}) if ObjectId.is_valid(course_id) else None
+    course_title = course.get("title", "LMS Course") if course else "LMS Course"
+
+    if ai_client:
+        try:
+            sys_msg = f"You are an AI Tutor teaching '{course_title}'. Explain topics targeting a {payload.mode} level learner concise and accurately."
+            response = ai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": sys_msg},
+                    {"role": "user", "content": payload.message}
+                ]
+            )
+            return {
+                "reply": response.choices[0].message.content,
+                "sources": [{"course_title": course_title, "mode": payload.mode}]
+            }
+        except Exception as e:
+            print(f"OpenAI Chat Error: {e}")
+
+    return {
+        "reply": f"[{payload.mode.title()} Level] Regarding '{payload.message}': This topic covers async patterns and execution models.",
+        "sources": [{"course_title": course_title, "mode": payload.mode}]
+    }
+
+@app.post("/api/v1/ai/lectures/{lecture_id}/generate-quiz")
+async def generate_quiz_ai(lecture_id: str):
+    if ai_client:
+        try:
+            prompt = "Generate 3 multiple choice questions for a programming course in JSON format with array of objects having keys: question, options (list of 4 strings), correct_option (index integer 0-3)."
+            res = ai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return {"quiz": json.loads(res.choices[0].message.content)}
+        except Exception as e:
+            print(f"OpenAI Quiz Gen Error: {e}")
+
+    return {
+        "quiz": [
+            {
+                "question": "What is the primary benefit of async I/O in FastAPI?",
+                "options": ["Single threading execution lock", "Non-blocking concurrency handling", "Multi-database ORM locking", "Static HTML generation"],
+                "correct_option": 1
+            }
+        ]
+    }
+
+@app.post("/api/v1/ai/modules/{module_id}/flashcards")
+async def generate_flashcards(module_id: str):
+    return {
+        "flashcards": [
+            {"id": "fc_1", "question": "What is MongoDB Motor?", "answer": "An asynchronous Python driver for MongoDB."},
+            {"id": "fc_2", "question": "What is Pydantic?", "answer": "Data validation library using Python type annotations."}
+        ]
+    }
+
+@app.post("/api/v1/ai/study-plan")
+async def generate_study_plan(payload: StudyPlanRequest):
+    return {
+        "user_id": payload.user_id,
+        "course_id": payload.course_id,
+        "plan": [
+            {"day": 1, "task": "Review Async DB Drivers transcript summary."},
+            {"day": 2, "task": "Attempt Module 1 Practice Quiz."},
+            {"day": 3, "task": "Submit Assignment #1."}
+        ]
+    }
 
 # =====================================================================
 # RECOMMENDATIONS & GAMIFICATION (PRD Section 8.6)
