@@ -35,7 +35,7 @@ function App() {
     { sender: "ai", text: "Hello! I am your AI Tutor. Ask me any question about this course!" }
   ]);
 
-  const [activeCourseId, setActiveCourseId] = useState("6a8d2cc07a8591b56ae0dd38");
+  const [activeCourseId, setActiveCourseId] = useState("6a8d6dc867132271f048f530");
 
   const fetchCatalog = () => {
     axios
