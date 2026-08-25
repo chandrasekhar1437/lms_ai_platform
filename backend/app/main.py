@@ -28,9 +28,9 @@ SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_jwt_key_change_in_production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-# Gmail SMTP Configuration
+# Gmail SMTP SSL Configuration (Port 465 avoids outbound blocks on Render)
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
 SENDER_EMAIL = os.getenv("SENDER_EMAIL", "chandrasekharnunna983@gmail.com")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "vofsvoaqipswczfo")
 
@@ -148,8 +148,8 @@ def send_otp_email(recipient_email: str, otp_code: str, subject: str):
         body = f"Hello,\n\nYour 6-digit OTP verification code is: {otp_code}\n\nThis code is valid for 10 minutes.\n\nBest regards,\nLMS Platform Team"
         msg.attach(MIMEText(body, 'plain'))
         
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
+        # Using SMTP_SSL with port 465 prevents network unreachable errors on cloud platforms
+        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.sendmail(SENDER_EMAIL, recipient_email, msg.as_string())
         server.quit()
