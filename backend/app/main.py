@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="LMS-AI Platform API (Full PRD Compliant)",
-    description="Backend API supporting Auth, Course Authoring, AI Tutor, Gamification, and Admin Controls.",
+    description="Backend API supporting Auth, RBAC, Course Authoring, AI Tutor, Gamification, and Admin Controls.",
     version="1.0.0",
     lifespan=lifespan,
     openapi_tags=[
@@ -185,7 +185,7 @@ class RoleUpdateRequest(BaseModel):
     role: str  # "student", "instructor", "admin"
 
 # =====================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS & RBAC MIDDLEWARE
 # =====================================================================
 
 def get_password_hash(password: str) -> str:
@@ -211,31 +211,44 @@ def format_doc(doc):
         doc["_id"] = str(doc["_id"])
     return doc
 
+def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+def require_role(allowed_roles: List[str]):
+    def role_checker(current_user: dict = Depends(get_current_user)):
+        user_role = current_user.get("role", "student")
+        if user_role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access forbidden: requires one of roles {allowed_roles}"
+            )
+        return current_user
+    return role_checker
+
 def send_otp_email(recipient_email: str, otp_code: str, subject: str):
     print(f"\n==========================================")
     print(f"SENDING OTP TO {recipient_email}: {otp_code}")
     print(f"==========================================\n")
-    
     if not BREVO_API_KEY:
         print("BREVO_API_KEY is missing in Environment Variables.")
         return
 
     url = "https://api.brevo.com/v3/smtp/email"
-    headers = {
-        "accept": "application/json",
-        "api-key": BREVO_API_KEY,
-        "content-type": "application/json"
-    }
+    headers = {"accept": "application/json", "api-key": BREVO_API_KEY, "content-type": "application/json"}
     payload = {
-        "sender": {
-            "name": "LMS Platform",
-            "email": "chandrasekharnunna983@gmail.com"
-        },
+        "sender": {"name": "LMS Platform", "email": "chandrasekharnunna983@gmail.com"},
         "to": [{"email": recipient_email}],
         "subject": subject,
         "htmlContent": f"<html><body><p>Hello,</p><p>Your verification OTP code is: <strong>{otp_code}</strong></p><p>This code is valid for 10 minutes.</p></body></html>"
     }
-    
     try:
         response = requests.post(url, json=payload, headers=headers)
         if response.status_code in [200, 201, 202]:
@@ -244,14 +257,6 @@ def send_otp_email(recipient_email: str, otp_code: str, subject: str):
             print(f"Brevo API Error: {response.status_code} - {response.text}")
     except Exception as e:
         print(f"Failed to send email via Brevo API: {e}")
-
-# =====================================================================
-# HEALTH CHECK
-# =====================================================================
-
-@app.get("/health", tags=["Health Check"])
-async def health_check():
-    return {"status": "ok", "message": "Backend running with full PRD compliance"}
 
 # =====================================================================
 # HEALTH CHECK
@@ -272,7 +277,6 @@ async def register(payload: UserRegister):
         raise HTTPException(status_code=400, detail="Email is already registered")
     
     otp_code = f"{random.randint(100000, 999999)}"
-    
     user_doc = {
         "full_name": payload.full_name,
         "email": payload.email,
@@ -282,10 +286,8 @@ async def register(payload: UserRegister):
         "otp": otp_code,
         "created_at": datetime.utcnow()
     }
-    
     await db.users.update_one({"email": payload.email}, {"$set": user_doc}, upsert=True)
     send_otp_email(payload.email, otp_code, "LMS Registration OTP Code")
-    
     return {"status": "otp_sent", "message": f"Verification OTP sent to {payload.email}"}
 
 @app.post("/api/v1/auth/verify-otp", tags=["8.1 Auth"])
@@ -346,13 +348,12 @@ async def refresh_token(payload: RefreshTokenRequest):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 @app.post("/api/v1/auth/logout", tags=["8.1 Auth"])
-async def logout(token: str = Depends(oauth2_scheme)):
+async def logout(current_user: dict = Depends(get_current_user)):
     return {"status": "success", "message": "Successfully logged out"}
 
 @app.get("/api/v1/auth/me", tags=["8.1 Auth"])
-async def get_current_user_profile(token: str = Depends(oauth2_scheme)):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    user_id = payload.get("sub")
+async def get_current_user_profile(current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("sub")
     user = await db.users.find_one({"_id": ObjectId(user_id)})
     if not user:
         raise HTTPException(status_code=404, detail="User profile not found")
@@ -418,22 +419,34 @@ async def get_course_tree(course_id: str):
         raise HTTPException(status_code=400, detail="Invalid Course ID format")
 
 @app.post("/api/v1/courses", tags=["8.2 Courses"])
-async def create_course(payload: CourseCreate, token: str = Depends(oauth2_scheme)):
+async def create_course(
+    payload: CourseCreate, 
+    user: dict = Depends(require_role(["instructor", "admin"]))
+):
     doc = payload.dict()
     doc["status"] = "pending"
+    doc["instructor_id"] = user.get("sub")
     doc["created_at"] = datetime.utcnow()
     doc["modules"] = []
     res = await db.courses.insert_one(doc)
     return {"status": "success", "course_id": str(res.inserted_id)}
 
 @app.put("/api/v1/courses/{course_id}", tags=["8.2 Courses"])
-async def update_course(course_id: str, payload: CourseUpdate, token: str = Depends(oauth2_scheme)):
+async def update_course(
+    course_id: str, 
+    payload: CourseUpdate, 
+    user: dict = Depends(require_role(["instructor", "admin"]))
+):
     update_data = {k: v for k, v in payload.dict().items() if v is not None}
     await db.courses.update_one({"_id": ObjectId(course_id)}, {"$set": update_data})
     return {"status": "success", "message": "Course updated"}
 
 @app.post("/api/v1/courses/{course_id}/modules", tags=["8.2 Courses"])
-async def add_module(course_id: str, payload: ModuleCreate, token: str = Depends(oauth2_scheme)):
+async def add_module(
+    course_id: str, 
+    payload: ModuleCreate, 
+    user: dict = Depends(require_role(["instructor", "admin"]))
+):
     module_doc = {
         "module_id": f"mod_{uuid.uuid4().hex[:6]}",
         "title": payload.title,
@@ -445,7 +458,12 @@ async def add_module(course_id: str, payload: ModuleCreate, token: str = Depends
     return {"status": "success", "module_id": module_doc["module_id"]}
 
 @app.post("/api/v1/modules/{module_id}/lectures", tags=["8.2 Courses"])
-async def add_lecture(module_id: str, title: str, file: UploadFile = File(...), token: str = Depends(oauth2_scheme)):
+async def add_lecture(
+    module_id: str, 
+    title: str, 
+    file: UploadFile = File(...), 
+    user: dict = Depends(require_role(["instructor", "admin"]))
+):
     saved_filename = f"{uuid.uuid4()}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, saved_filename)
     with open(file_path, "wb") as buffer:
@@ -462,7 +480,11 @@ async def add_lecture(module_id: str, title: str, file: UploadFile = File(...), 
     return {"status": "success", "lecture_id": lecture_id}
 
 @app.post("/api/v1/courses/{course_id}/approve", tags=["8.2 Courses"])
-async def approve_reject_course(course_id: str, payload: CourseApprovalRequest, token: str = Depends(oauth2_scheme)):
+async def approve_reject_course(
+    course_id: str, 
+    payload: CourseApprovalRequest, 
+    user: dict = Depends(require_role(["admin"]))
+):
     await db.courses.update_one({"_id": ObjectId(course_id)}, {"$set": {"status": payload.decision, "approval_comment": payload.comment}})
     return {"status": "success", "decision": payload.decision}
 
@@ -478,10 +500,11 @@ async def stream_video(file_name: str):
 # =====================================================================
 
 @app.post("/api/v1/courses/{course_id}/enroll", tags=["8.3 Enrollment & Progress"])
-async def enroll_course(course_id: str, token: str = Depends(oauth2_scheme)):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    user_id = payload.get("sub")
-    
+async def enroll_course(
+    course_id: str, 
+    user: dict = Depends(require_role(["student", "admin"]))
+):
+    user_id = user.get("sub")
     existing = await db.enrollments.find_one({"user_id": user_id, "course_id": course_id})
     if existing:
         return {"status": "already_enrolled", "enrollment_id": str(existing["_id"])}
@@ -496,10 +519,8 @@ async def enroll_course(course_id: str, token: str = Depends(oauth2_scheme)):
     return {"status": "success", "enrollment_id": str(result.inserted_id)}
 
 @app.get("/api/v1/enrollments/me", tags=["8.3 Enrollment & Progress"])
-async def get_my_enrollments(token: str = Depends(oauth2_scheme)):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    user_id = payload.get("sub")
-    
+async def get_my_enrollments(current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("sub")
     cursor = db.enrollments.find({"user_id": user_id})
     enrollments = await cursor.to_list(length=100)
     
@@ -541,9 +562,8 @@ async def add_lecture_note(lecture_id: str, payload: NoteCreate):
     return {"status": "success", "note_id": str(res.inserted_id)}
 
 @app.post("/api/v1/lectures/{lecture_id}/bookmarks", tags=["8.3 Enrollment & Progress"])
-async def add_bookmark(lecture_id: str, token: str = Depends(oauth2_scheme)):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    user_id = payload.get("sub")
+async def add_bookmark(lecture_id: str, current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("sub")
     bookmark_doc = {"user_id": user_id, "lecture_id": lecture_id, "created_at": datetime.utcnow()}
     res = await db.bookmarks.insert_one(bookmark_doc)
     return {"status": "success", "bookmark_id": str(res.inserted_id)}
@@ -591,7 +611,10 @@ async def get_progress(course_id: str, user_id: str):
 # =====================================================================
 
 @app.post("/api/v1/assignments", tags=["8.4 Assignments & Quizzes"])
-async def create_assignment(payload: AssignmentCreate):
+async def create_assignment(
+    payload: AssignmentCreate,
+    user: dict = Depends(require_role(["instructor", "admin"]))
+):
     doc = payload.dict()
     doc["created_at"] = datetime.utcnow()
     res = await db.assignments.insert_one(doc)
@@ -618,12 +641,19 @@ async def submit_assignment(assignment_id: str, user_id: str, file: UploadFile =
     return {"status": "success", "submission_id": str(res.inserted_id)}
 
 @app.put("/api/v1/submissions/{submission_id}/grade", tags=["8.4 Assignments & Quizzes"])
-async def grade_submission(submission_id: str, payload: GradeSubmissionRequest):
+async def grade_submission(
+    submission_id: str, 
+    payload: GradeSubmissionRequest,
+    user: dict = Depends(require_role(["instructor", "admin"]))
+):
     await db.submissions.update_one({"_id": ObjectId(submission_id)}, {"$set": {"grade": payload.grade, "feedback": payload.feedback}})
     return {"status": "success"}
 
 @app.post("/api/v1/quizzes", tags=["8.4 Assignments & Quizzes"])
-async def create_quiz(payload: QuizCreate):
+async def create_quiz(
+    payload: QuizCreate,
+    user: dict = Depends(require_role(["instructor", "admin"]))
+):
     doc = payload.dict()
     doc["is_ai_generated"] = False
     doc["created_at"] = datetime.utcnow()
@@ -631,9 +661,8 @@ async def create_quiz(payload: QuizCreate):
     return {"status": "success", "quiz_id": str(res.inserted_id)}
 
 @app.post("/api/v1/quizzes/{quiz_id}/attempt", tags=["8.4 Assignments & Quizzes"])
-async def start_quiz_attempt(quiz_id: str, token: str = Depends(oauth2_scheme)):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    user_id = payload.get("sub")
+async def start_quiz_attempt(quiz_id: str, current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("sub")
     attempt_id = f"att_{uuid.uuid4().hex[:8]}"
     attempt_doc = {"attempt_id": attempt_id, "quiz_id": quiz_id, "user_id": user_id, "started_at": datetime.utcnow()}
     await db.attempts.insert_one(attempt_doc)
@@ -667,9 +696,8 @@ async def grade_quiz(course_id: str, payload: QuizSubmission):
 # =====================================================================
 
 @app.post("/api/v1/ai/chat/sessions", tags=["8.5 AI Tutor"])
-async def start_chat_session(payload: ChatSessionCreate, token: str = Depends(oauth2_scheme)):
-    payload_data = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    user_id = payload_data.get("sub")
+async def start_chat_session(payload: ChatSessionCreate, current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("sub")
     session_id = f"sess_{uuid.uuid4().hex[:8]}"
     session_doc = {"session_id": session_id, "course_id": payload.course_id, "user_id": user_id, "created_at": datetime.utcnow()}
     await db.chat_sessions.insert_one(session_doc)
@@ -796,7 +824,7 @@ async def update_chat_mode(session_id: str, payload: ChatModeUpdate):
 # =====================================================================
 
 @app.get("/api/v1/recommendations/me", tags=["8.6 Recommendations & Gamification"])
-async def get_recommendations(token: str = Depends(oauth2_scheme)):
+async def get_recommendations(current_user: dict = Depends(get_current_user)):
     return [
         {"course_id": "c101", "title": "Advanced Microservices with FastAPI", "reason": "Recommended based on your recent activity"}
     ]
@@ -816,16 +844,15 @@ async def add_forum_post(course_id: str, payload: ForumPostCreate):
     return {"status": "success"}
 
 @app.get("/api/v1/users/me/badges", tags=["8.6 Recommendations & Gamification"])
-async def get_user_badges(token: str = Depends(oauth2_scheme)):
+async def get_user_badges(current_user: dict = Depends(get_current_user)):
     return [
         {"badge_id": "b1", "title": "Fast Learner", "description": "Completed first module", "unlocked": True},
         {"badge_id": "b2", "title": "Quiz Master", "description": "Scored 100% on a quiz", "unlocked": True}
     ]
 
 @app.get("/api/v1/users/me/streak", tags=["8.6 Recommendations & Gamification"])
-async def get_user_streak(token: str = Depends(oauth2_scheme)):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    user_id = payload.get("sub")
+async def get_user_streak(current_user: dict = Depends(get_current_user)):
+    user_id = current_user.get("sub")
     streak = await db.streaks.find_one({"user_id": user_id})
     return {"current_streak": streak.get("current_streak", 1) if streak else 1}
 
@@ -841,29 +868,40 @@ async def get_course_leaderboard(course_id: str):
 # =====================================================================
 
 @app.get("/api/v1/admin/users", tags=["8.7 Admin"])
-async def admin_list_users():
+async def admin_list_users(user: dict = Depends(require_role(["admin"]))):
     cursor = db.users.find()
     users = await cursor.to_list(length=100)
     return [format_doc(u) for u in users]
 
 @app.put("/api/v1/admin/users/{user_id}/role", tags=["8.7 Admin"])
-async def admin_update_role(user_id: str, payload: RoleUpdateRequest):
+async def admin_update_role(
+    user_id: str, 
+    payload: RoleUpdateRequest,
+    user: dict = Depends(require_role(["admin"]))
+):
     await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": {"role": payload.role}})
     return {"status": "success", "message": f"User role updated to {payload.role}"}
 
 @app.put("/api/v1/admin/users/{user_id}/suspend", tags=["8.7 Admin"])
-async def admin_suspend_user(user_id: str):
+async def admin_suspend_user(
+    user_id: str,
+    user: dict = Depends(require_role(["admin"]))
+):
     await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": {"is_suspended": True}})
     return {"status": "success", "message": "User account suspended"}
 
 @app.get("/api/v1/admin/courses/pending", tags=["8.7 Admin"])
-async def admin_pending_courses():
+async def admin_pending_courses(user: dict = Depends(require_role(["admin"]))):
     cursor = db.courses.find({"status": "pending"})
     courses = await cursor.to_list(length=100)
     return [format_doc(c) for c in courses]
 
 @app.post("/api/v1/admin/courses/{course_id}/approve", tags=["8.7 Admin"])
-async def admin_approve_course(course_id: str, payload: CourseApprovalRequest):
+async def admin_approve_course(
+    course_id: str, 
+    payload: CourseApprovalRequest,
+    user: dict = Depends(require_role(["admin"]))
+):
     await db.courses.update_one(
         {"_id": ObjectId(course_id)}, 
         {"$set": {"status": payload.decision, "approval_comment": payload.comment}}
@@ -871,7 +909,7 @@ async def admin_approve_course(course_id: str, payload: CourseApprovalRequest):
     return {"status": "success", "decision": payload.decision}
 
 @app.get("/api/v1/admin/analytics/overview", tags=["8.7 Admin"])
-async def admin_analytics_overview():
+async def admin_analytics_overview(user: dict = Depends(require_role(["admin"]))):
     total_users = await db.users.count_documents({})
     total_courses = await db.courses.count_documents({})
     total_enrollments = await db.enrollments.count_documents({})
@@ -883,5 +921,5 @@ async def admin_analytics_overview():
     }
 
 @app.get("/api/v1/admin/moderation/flagged-posts", tags=["8.7 Admin"])
-async def admin_flagged_posts():
+async def admin_flagged_posts(user: dict = Depends(require_role(["admin"]))):
     return [{"post_id": "p101", "reason": "Inappropriate content", "author": "user_demo"}]
