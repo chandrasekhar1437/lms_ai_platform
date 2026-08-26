@@ -25,7 +25,7 @@ function App() {
   const [course, setCourse] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  // Instructor Form States - Course
+  // Instructor Form States - Course Creation
   const [newCourseTitle, setNewCourseTitle] = useState("");
   const [newCourseDesc, setNewCourseDesc] = useState("");
   const [newCourseCat, setNewCourseCat] = useState("Computer Science");
@@ -222,7 +222,7 @@ function App() {
   // Instructor Action: Add Module
   const handleAddModule = (e) => {
     e.preventDefault();
-    if (!targetCourseId || !moduleTitle) return alert("Select a course and enter a module title");
+    if (!targetCourseId || !moduleTitle) return alert("Select a course and enter module title");
     axios
       .post(`${API_BASE_URL}/api/v1/courses/${targetCourseId}/modules`, { title: moduleTitle, order_index: 1 }, getAuthHeader())
       .then((res) => {
@@ -236,11 +236,13 @@ function App() {
   // Instructor Action: Upload Lecture Video
   const handleUploadLecture = (e) => {
     e.preventDefault();
-    if (!targetModuleId || !lectureTitle || !selectedFile) return alert("Select module, enter lecture title, and select a video file");
+    if (!targetModuleId || !lectureTitle) return alert("Select module and enter lecture title");
 
     const formData = new FormData();
     formData.append("title", lectureTitle);
-    formData.append("file", selectedFile);
+    if (selectedFile) {
+      formData.append("file", selectedFile);
+    }
 
     setUploading(true);
     axios
@@ -262,7 +264,6 @@ function App() {
         alert(err.response?.data?.detail || "Video upload failed");
       });
   };
-
   // Admin Actions
   const handleApproveCourse = (courseId, decision) => {
     axios
@@ -480,7 +481,6 @@ function App() {
             📚 Student Catalog
           </button>
 
-          {/* INSTRUCTOR & ADMIN PERMISSION: Course Creation */}
           {(user.role === "instructor" || user.role === "admin") && (
             <button 
               onClick={() => setActiveTab("create_course")} 
@@ -490,7 +490,6 @@ function App() {
             </button>
           )}
 
-          {/* ADMIN PERMISSION: Governance & Analytics */}
           {user.role === "admin" && (
             <button 
               onClick={() => setActiveTab("admin_panel")} 
@@ -563,7 +562,10 @@ function App() {
                         ) : (
                           mod.lectures?.map((lec) => {
                             const isCompleted = progress.completed_lectures?.includes(lec.lecture_id);
-                            const videoSource = lec.video_url?.startsWith("/api") ? `${API_BASE_URL}${lec.video_url}` : lec.video_url;
+                            const videoSource = lec.video_url?.startsWith("http") 
+                              ? lec.video_url 
+                              : `${API_BASE_URL}${lec.video_url}`;
+
                             return (
                               <div key={lec.lecture_id} className="lecture-card">
                                 <div className="lecture-card-header">
@@ -739,7 +741,7 @@ function App() {
               </div>
               <div className="form-group">
                 <label style={{ fontSize: "14px", fontWeight: "600", display: "block", marginBottom: "6px" }}>Attach Video File (.mp4):</label>
-                <input type="file" accept="video/mp4,video/*" onChange={(e) => setSelectedFile(e.target.files[0])} required className="input-field" />
+                <input type="file" accept="video/mp4,video/*" onChange={(e) => setSelectedFile(e.target.files[0])} className="input-field" />
               </div>
               <button type="submit" disabled={uploading} className="btn-primary auth-full-btn">
                 {uploading ? "Uploading Video..." : "Upload Lecture Video"}

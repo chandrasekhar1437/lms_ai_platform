@@ -461,18 +461,22 @@ async def add_module(
 async def add_lecture(
     module_id: str, 
     title: str, 
-    file: UploadFile = File(...), 
+    file: Optional[UploadFile] = File(None), 
     user: dict = Depends(require_role(["instructor", "admin"]))
 ):
-    saved_filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, saved_filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    final_video_url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+    if file:
+        saved_filename = f"{uuid.uuid4()}_{file.filename}"
+        file_path = os.path.join(UPLOAD_DIR, saved_filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        final_video_url = f"/api/v1/videos/{saved_filename}"
+
     lecture_id = f"lec_{uuid.uuid4().hex[:6]}"
     lecture_doc = {
         "lecture_id": lecture_id,
         "title": title,
-        "video_url": f"/api/v1/videos/{saved_filename}",
+        "video_url": final_video_url,
         "duration_seconds": 600,
         "transcript": "FastAPI enables rapid API creation with Python."
     }
@@ -491,14 +495,14 @@ async def approve_reject_course(
 @app.get("/api/v1/videos/{file_name}", tags=["8.2 Courses"])
 async def stream_video(file_name: str):
     file_path = os.path.join(UPLOAD_DIR, file_name)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Video file not found")
-    return FileResponse(
-        file_path, 
-        media_type="video/mp4",
-        headers={"Accept-Ranges": "bytes"}
-    )
-
+    if os.path.exists(file_path):
+        return FileResponse(
+            file_path, 
+            media_type="video/mp4",
+            headers={"Accept-Ranges": "bytes"}
+        )
+    # Fallback to high-availability public sample video if local file was wiped during Render server restart
+    return requests.get("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", stream=True).raw
 # =====================================================================
 # SECTION 8.3 ENROLLMENT & PROGRESS ENDPOINTS
 # =====================================================================
@@ -694,6 +698,7 @@ async def grade_quiz(course_id: str, payload: QuizSubmission):
                         "message": "Correct answer!" if is_correct else "Incorrect. Try again!"
                     }
     raise HTTPException(status_code=404, detail="Quiz not found")
+
 # =====================================================================
 # SECTION 8.5 AI TUTOR ENDPOINTS
 # =====================================================================
