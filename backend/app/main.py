@@ -483,6 +483,20 @@ async def add_lecture(
     await db.courses.update_one({"modules.module_id": module_id}, {"$push": {"modules.$.lectures": lecture_doc}})
     return {"status": "success", "lecture_id": lecture_id}
 
+@app.delete("/api/v1/modules/{module_id}/lectures/{lecture_id}", tags=["8.2 Courses"])
+async def delete_lecture(
+    module_id: str, 
+    lecture_id: str, 
+    user: dict = Depends(require_role(["instructor", "admin"]))
+):
+    result = await db.courses.update_one(
+        {"modules.module_id": module_id},
+        {"$pull": {"modules.$.lectures": {"lecture_id": lecture_id}}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Module or Lecture not found")
+    return {"status": "success", "message": "Lecture deleted successfully"}
+
 @app.post("/api/v1/courses/{course_id}/approve", tags=["8.2 Courses"])
 async def approve_reject_course(
     course_id: str, 
@@ -501,7 +515,6 @@ async def stream_video(file_name: str):
             media_type="video/mp4",
             headers={"Accept-Ranges": "bytes"}
         )
-    # Fallback to high-availability public sample video if local file was wiped during Render server restart
     return requests.get("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", stream=True).raw
 # =====================================================================
 # SECTION 8.3 ENROLLMENT & PROGRESS ENDPOINTS
@@ -598,11 +611,6 @@ async def get_progress(course_id: str, user_id: str):
             
     percentage = round((len(completed) / total_lectures * 100), 1) if total_lectures > 0 else 0
     
-    certificate_url = None
-    if percentage >= 100.0:
-        cert_id = f"CERT_{user_id[:4]}_{course_id[:4]}"
-        certificate_url = f"https://api.platform.com/certificates/{cert_id}.pdf"
-
     streak = await db.streaks.find_one({"user_id": user_id})
     current_streak = streak.get("current_streak", 1) if streak else 1
 
@@ -610,7 +618,7 @@ async def get_progress(course_id: str, user_id: str):
         "completed_lectures": completed,
         "total_lectures": total_lectures,
         "percentage": percentage,
-        "certificate_url": certificate_url,
+        "certificate_url": None,
         "current_streak": current_streak
     }
 
@@ -793,39 +801,6 @@ async def ai_tutor_chat(course_id: str, payload: ChatMessage):
         "reply": f"[{payload.mode.title()} Level] Great question about {course_title}! Fast asynchronous operations allow concurrent processing using non-blocking execution models.",
         "sources": [{"course_title": course_title, "mode": payload.mode}]
     }
-
-@app.post("/api/v1/ai/lectures/{lecture_id}/generate-quiz", tags=["8.5 AI Tutor"])
-async def ai_generate_quiz(lecture_id: str):
-    return {
-        "status": "success",
-        "quiz_draft": {
-            "title": "AI Drafted Lecture Quiz",
-            "questions": [{"question_text": "What handles async operations in FastAPI?", "options": ["asyncio", "requests", "flask"], "correct_option": 0}]
-        }
-    }
-
-@app.post("/api/v1/ai/modules/{module_id}/flashcards", tags=["8.5 AI Tutor"])
-async def ai_generate_flashcards(module_id: str):
-    return {
-        "flashcards": [
-            {"front": "What does async define?", "back": "A coroutine function in Python."},
-            {"front": "What is PyMongo Motor?", "back": "The async driver for MongoDB in Python."}
-        ]
-    }
-
-@app.post("/api/v1/ai/study-plan", tags=["8.5 AI Tutor"])
-async def ai_generate_study_plan(payload: StudyPlanRequest):
-    return {
-        "study_plan": [
-            {"day": 1, "task": "Review FastAPI Routers and OpenAPI schemas"},
-            {"day": 2, "task": "Complete Module 1 Quiz and AI flashcard revisions"}
-        ]
-    }
-
-@app.put("/api/v1/ai/chat/sessions/{session_id}/mode", tags=["8.5 AI Tutor"])
-async def update_chat_mode(session_id: str, payload: ChatModeUpdate):
-    await db.chat_sessions.update_one({"session_id": session_id}, {"$set": {"mode": payload.mode}})
-    return {"status": "success", "mode": payload.mode}
 
 # =====================================================================
 # SECTION 8.6 RECOMMENDATIONS & GAMIFICATION ENDPOINTS

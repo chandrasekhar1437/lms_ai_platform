@@ -264,6 +264,20 @@ function App() {
         alert(err.response?.data?.detail || "Video upload failed");
       });
   };
+
+  // Instructor/Admin Action: Delete Lecture Video
+  const handleDeleteLecture = (moduleId, lectureId) => {
+    if (!window.confirm("Are you sure you want to delete this lecture video?")) return;
+
+    axios
+      .delete(`${API_BASE_URL}/api/v1/modules/${moduleId}/lectures/${lectureId}`, getAuthHeader())
+      .then(() => {
+        alert("Lecture deleted successfully!");
+        if (activeCourseId) fetchCourseTree(activeCourseId);
+      })
+      .catch((err) => alert(err.response?.data?.detail || "Failed to delete lecture"));
+  };
+
   // Admin Actions
   const handleApproveCourse = (courseId, decision) => {
     axios
@@ -346,7 +360,6 @@ function App() {
         setChatMessages((prev) => [...prev, { sender: "ai", text: res.data.reply }]);
       });
   };
-
   // Authentication Screen
   if (!user) {
     return (
@@ -579,7 +592,7 @@ function App() {
                                   </video>
                                 )}
 
-                                <div className="action-row">
+                                <div className="action-row" style={{ marginTop: "8px" }}>
                                   <button
                                     onClick={() => handleMarkComplete(lec.lecture_id)}
                                     disabled={isCompleted}
@@ -587,9 +600,20 @@ function App() {
                                   >
                                     {isCompleted ? "✓ Completed" : "Mark as Watched"}
                                   </button>
+
                                   <button onClick={() => handleSummarize(lec.lecture_id)} className="btn-primary btn-purple">
                                     ✨ AI Summary
                                   </button>
+
+                                  {(user.role === "admin" || user.role === "instructor") && (
+                                    <button
+                                      onClick={() => handleDeleteLecture(mod.module_id, lec.lecture_id)}
+                                      className="btn-danger"
+                                      style={{ padding: "6px 12px" }}
+                                    >
+                                      🗑️ Delete Video
+                                    </button>
+                                  )}
                                 </div>
 
                                 <div className="action-row">
