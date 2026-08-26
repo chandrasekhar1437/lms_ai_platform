@@ -5,6 +5,33 @@ import "./App.css";
 // Production Backend API URL deployed on Render
 const API_BASE_URL = "https://lms-ai-platform.onrender.com";
 
+// Custom hook to trigger automatic logout after inactivity
+function useAutoLogout(timeoutMinutes, onLogout, isLoggedIn) {
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    let timer;
+
+    const resetTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        alert("Session expired due to inactivity. Logging out...");
+        onLogout();
+      }, timeoutMinutes * 60 * 1000);
+    };
+
+    const events = ["mousemove", "keydown", "click", "scroll"];
+    events.forEach((event) => window.addEventListener(event, resetTimer));
+
+    resetTimer(); // Initialize timer
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      events.forEach((event) => window.removeEventListener(event, resetTimer));
+    };
+  }, [timeoutMinutes, onLogout, isLoggedIn]);
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [authView, setAuthView] = useState("login"); // 'login', 'register', 'otp', 'forgot', 'reset'
@@ -57,6 +84,15 @@ function App() {
   ]);
 
   const [activeCourseId, setActiveCourseId] = useState("");
+
+  const handleLogout = () => {
+    localStorage.clear();
+    setUser(null);
+    setActiveTab("learn");
+  };
+
+  // Auto-logout user after 15 minutes of inactivity
+  useAutoLogout(15, handleLogout, Boolean(user));
 
   const getAuthHeader = () => {
     const token = localStorage.getItem("token") || localStorage.getItem("access_token");
@@ -193,12 +229,6 @@ function App() {
         setAuthView("login");
       })
       .catch((err) => alert(err.response?.data?.detail || "Reset Failed"));
-  };
-
-  const handleLogout = () => {
-    localStorage.clear();
-    setUser(null);
-    setActiveTab("learn");
   };
 
   // Instructor Action: Create Course
@@ -728,7 +758,7 @@ function App() {
 
             <hr style={{ margin: "24px 0", borderTop: "1px solid #e2e8f0" }} />
 
-            {/* Form 2: Add Module */}
+           {/* Form 2: Add Module */}
             <h2>2. Add Module to Course</h2>
             <form onSubmit={handleAddModule} style={{ marginBottom: "32px" }}>
               <div className="form-group">
