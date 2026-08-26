@@ -493,7 +493,11 @@ async def stream_video(file_name: str):
     file_path = os.path.join(UPLOAD_DIR, file_name)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Video file not found")
-    return FileResponse(file_path, media_type="video/mp4")
+    return FileResponse(
+        file_path, 
+        media_type="video/mp4",
+        headers={"Accept-Ranges": "bytes"}
+    )
 
 # =====================================================================
 # SECTION 8.3 ENROLLMENT & PROGRESS ENDPOINTS
@@ -690,7 +694,6 @@ async def grade_quiz(course_id: str, payload: QuizSubmission):
                         "message": "Correct answer!" if is_correct else "Incorrect. Try again!"
                     }
     raise HTTPException(status_code=404, detail="Quiz not found")
-
 # =====================================================================
 # SECTION 8.5 AI TUTOR ENDPOINTS
 # =====================================================================
