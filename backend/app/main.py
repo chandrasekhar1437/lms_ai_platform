@@ -3,15 +3,13 @@ import uuid
 import shutil
 import random
 import json
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, date
 from typing import Optional, List
 
 from dotenv import load_dotenv
 import requests
+import resend
 from fastapi import FastAPI, HTTPException, Depends, status, File, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -30,16 +28,16 @@ load_dotenv()
 # JWT Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_jwt_key_change_in_production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 120
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"))
 
-# Gmail SMTP Configuration (Replaces Brevo API)
-SMTP_EMAIL = os.getenv("SMTP_EMAIL", "chandrasekharnunna983@gmail.com")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")  # 16-character Google App Password
+# Resend API Configuration
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+FROM_EMAIL = os.getenv("FROM_EMAIL", "onboarding@resend.dev")
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
-# AI API Key
+# AI API Key & Client
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Initialize OpenAI Client
 ai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__ident="2b")
@@ -48,15 +46,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Application Lifespan Configuration
+# Lifespan Configuration
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Application startup: LMS API running.")
+    print("Application startup: LMS API running with Resend & MongoDB.")
     yield
     print("Application shutdown.")
 
 app = FastAPI(
-    title="LMS-AI Platform API (Full PRD Compliant)",
+    title="LMS-AI Platform API",
     description="Backend API supporting Auth, RBAC, Course Authoring, AI Tutor, Gamification, and Admin Controls.",
     version="1.0.0",
     lifespan=lifespan,
@@ -143,9 +141,6 @@ class ChatMessage(BaseModel):
     message: str
     mode: Optional[str] = "intermediate"
 
-class ChatModeUpdate(BaseModel):
-    mode: str  # "beginner", "intermediate", "advanced"
-
 class QuizSubmission(BaseModel):
     quiz_id: str
     selected_option: int
@@ -182,13 +177,14 @@ class QuizCreate(BaseModel):
 class StudyPlanRequest(BaseModel):
     course_id: str
     user_id: str
+    target_weeks: Optional[int] = 4
 
 class CourseApprovalRequest(BaseModel):
-    decision: str  # "approved" or "rejected"
+    decision: str
     comment: Optional[str] = ""
 
 class RoleUpdateRequest(BaseModel):
-    role: str  # "student", "instructor", "admin"
+    role: str
 
 # =====================================================================
 # HELPER FUNCTIONS & RBAC MIDDLEWARE
@@ -239,45 +235,39 @@ def require_role(allowed_roles: List[str]):
         return current_user
     return role_checker
 
-def send_otp_email(recipient_email: str, otp_code: str, subject: str):
-    """Sends OTP via free Gmail SMTP with console fallback for local or debugging."""
+def send_otp_email(recipient_email: str, otp_code: str, subject: str = "Your Verification Code"):
+    """Sends OTP via Resend HTTPS API with console fallback."""
     print(f"\n==========================================")
-    print(f"SENDING OTP TO {recipient_email}: {otp_code}")
+    print(f"[OTP DISPATCH] Recipient: {recipient_email} | Code: {otp_code}")
     print(f"==========================================\n")
 
-    if not SMTP_PASSWORD:
-        print("SMTP_PASSWORD environment variable is missing. OTP displayed in server logs above.")
-        return
+    if not RESEND_API_KEY:
+        print("[WARNING] RESEND_API_KEY not configured. OTP printed above.")
+        return False
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["From"] = f"LMS Platform <{SMTP_EMAIL}>"
-        msg["To"] = recipient_email
-        msg["Subject"] = subject
-
-        html_content = f"""
-        <html>
-          <body style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
-            <h2 style="color: #4f46e5;">LMS Platform Verification</h2>
-            <p>Hello,</p>
-            <p>Your 6-digit verification OTP code is:</p>
-            <div style="font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #1e293b; padding: 12px 20px; background: #f1f5f9; width: fit-content; border-radius: 8px;">
-              {otp_code}
+        response = resend.Emails.send({
+            "from": f"LMS Platform <{FROM_EMAIL}>",
+            "to": [recipient_email],
+            "subject": subject,
+            "html": f"""
+            <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <h2 style="color: #1e293b; margin-bottom: 8px;">Verification Code</h2>
+                <p style="color: #475569;">Use this code to verify your action on LMS Platform:</p>
+                <div style="text-align: center; margin: 24px 0;">
+                    <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #2563eb; background: #eff6ff; padding: 10px 24px; border-radius: 6px; border: 1px solid #bfdbfe;">
+                        {otp_code}
+                    </span>
+                </div>
+                <p style="color: #94a3b8; font-size: 13px;">Valid for 10 minutes. If you did not request this, you can safely ignore this email.</p>
             </div>
-            <p style="color: #64748b; margin-top: 16px;">This code is valid for 10 minutes. Do not share it with anyone.</p>
-          </body>
-        </html>
-        """
-        msg.attach(MIMEText(html_content, "html"))
-
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(SMTP_EMAIL, SMTP_PASSWORD)
-            server.send_message(msg)
-
-        print(f"Email successfully delivered to {recipient_email} via Gmail SMTP!")
+            """
+        })
+        print(f"Resend delivered: {response}")
+        return True
     except Exception as e:
-        print(f"Gmail SMTP Delivery Failed: {e}")
+        print(f"Resend Delivery Error: {e}")
+        return False
 
 # =====================================================================
 # HEALTH CHECK
@@ -389,7 +379,6 @@ async def forgot_password(payload: ForgotPasswordRequest):
     otp_code = f"{random.randint(100000, 999999)}"
     await db.users.update_one({"email": payload.email}, {"$set": {"reset_otp": otp_code}})
     send_otp_email(payload.email, otp_code, "LMS Password Reset OTP Code")
-    
     return {"status": "success", "message": f"Password reset OTP sent to {payload.email}"}
 
 @app.post("/api/v1/auth/reset-password", tags=["8.1 Auth"])
@@ -730,7 +719,7 @@ async def grade_quiz(course_id: str, payload: QuizSubmission):
     raise HTTPException(status_code=404, detail="Quiz not found")
 
 # =====================================================================
-# SECTION 8.5 AI TUTOR ENDPOINTS
+# SECTION 8.5 AI TUTOR & GENERATION ENDPOINTS
 # =====================================================================
 
 @app.post("/api/v1/ai/chat/sessions", tags=["8.5 AI Tutor"])
@@ -822,6 +811,48 @@ async def ai_tutor_chat(course_id: str, payload: ChatMessage):
     return {
         "reply": f"[{payload.mode.title()} Level] Great question about {course_title}! Fast asynchronous operations allow concurrent processing using non-blocking execution models.",
         "sources": [{"course_title": course_title, "mode": payload.mode}]
+    }
+
+@app.post("/api/v1/ai/lectures/{lecture_id}/generate-quiz", tags=["8.5 AI Tutor"])
+async def generate_quiz_ai(lecture_id: str):
+    return {
+        "lecture_id": lecture_id,
+        "questions": [
+            {
+                "question": "What is the primary benefit of asynchronous IO?",
+                "options": ["Lower concurrency", "Non-blocking execution", "Synchronous blocking", "No CPU usage"],
+                "correct_option": 1
+            },
+            {
+                "question": "Which HTTP status code signifies a successful resource creation?",
+                "options": ["200", "201", "400", "404"],
+                "correct_option": 1
+            }
+        ]
+    }
+
+@app.post("/api/v1/ai/modules/{module_id}/flashcards", tags=["8.5 AI Tutor"])
+async def generate_flashcards(module_id: str):
+    return {
+        "module_id": module_id,
+        "flashcards": [
+            {"card_id": 1, "front": "What does JWT stand for?", "back": "JSON Web Token - used for securely transmitting claims."},
+            {"card_id": 2, "front": "What is CORS in web development?", "back": "Cross-Origin Resource Sharing - controls cross-domain browser requests."}
+        ]
+    }
+
+@app.post("/api/v1/ai/study-plan", tags=["8.5 AI Tutor"])
+async def generate_study_plan(payload: StudyPlanRequest):
+    return {
+        "course_id": payload.course_id,
+        "user_id": payload.user_id,
+        "target_weeks": payload.target_weeks,
+        "plan": [
+            {"week": 1, "goal": "Complete Module 1 and Core Concepts Quiz"},
+            {"week": 2, "goal": "Watch lectures 3 through 6 and submit Assignment 1"},
+            {"week": 3, "goal": "Review AI Tutor notes and study flashcards"},
+            {"week": 4, "goal": "Complete Final Assessment and obtain certificate"}
+        ]
     }
 
 # =====================================================================
