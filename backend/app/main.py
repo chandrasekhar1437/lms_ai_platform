@@ -3,12 +3,15 @@ import uuid
 import shutil
 import random
 import json
-import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, date
 from typing import Optional, List
 
 from dotenv import load_dotenv
+import requests
 from fastapi import FastAPI, HTTPException, Depends, status, File, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -29,8 +32,11 @@ SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_jwt_key_change_in_production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-# External API Keys
-BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+# Gmail SMTP Configuration (Replaces Brevo API)
+SMTP_EMAIL = os.getenv("SMTP_EMAIL", "chandrasekharnunna983@gmail.com")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")  # 16-character Google App Password
+
+# AI API Key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Initialize OpenAI Client
@@ -234,29 +240,44 @@ def require_role(allowed_roles: List[str]):
     return role_checker
 
 def send_otp_email(recipient_email: str, otp_code: str, subject: str):
+    """Sends OTP via free Gmail SMTP with console fallback for local or debugging."""
     print(f"\n==========================================")
     print(f"SENDING OTP TO {recipient_email}: {otp_code}")
     print(f"==========================================\n")
-    if not BREVO_API_KEY:
-        print("BREVO_API_KEY is missing in Environment Variables.")
+
+    if not SMTP_PASSWORD:
+        print("SMTP_PASSWORD environment variable is missing. OTP displayed in server logs above.")
         return
 
-    url = "https://api.brevo.com/v3/smtp/email"
-    headers = {"accept": "application/json", "api-key": BREVO_API_KEY, "content-type": "application/json"}
-    payload = {
-        "sender": {"name": "LMS Platform", "email": "chandrasekharnunna983@gmail.com"},
-        "to": [{"email": recipient_email}],
-        "subject": subject,
-        "htmlContent": f"<html><body><p>Hello,</p><p>Your verification OTP code is: <strong>{otp_code}</strong></p><p>This code is valid for 10 minutes.</p></body></html>"
-    }
     try:
-        response = requests.post(url, json=payload, headers=headers)
-        if response.status_code in [200, 201, 202]:
-            print("Email sent successfully via Brevo API!")
-        else:
-            print(f"Brevo API Error: {response.status_code} - {response.text}")
+        msg = MIMEMultipart("alternative")
+        msg["From"] = f"LMS Platform <{SMTP_EMAIL}>"
+        msg["To"] = recipient_email
+        msg["Subject"] = subject
+
+        html_content = f"""
+        <html>
+          <body style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">
+            <h2 style="color: #4f46e5;">LMS Platform Verification</h2>
+            <p>Hello,</p>
+            <p>Your 6-digit verification OTP code is:</p>
+            <div style="font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #1e293b; padding: 12px 20px; background: #f1f5f9; width: fit-content; border-radius: 8px;">
+              {otp_code}
+            </div>
+            <p style="color: #64748b; margin-top: 16px;">This code is valid for 10 minutes. Do not share it with anyone.</p>
+          </body>
+        </html>
+        """
+        msg.attach(MIMEText(html_content, "html"))
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.send_message(msg)
+
+        print(f"Email successfully delivered to {recipient_email} via Gmail SMTP!")
     except Exception as e:
-        print(f"Failed to send email via Brevo API: {e}")
+        print(f"Gmail SMTP Delivery Failed: {e}")
 
 # =====================================================================
 # HEALTH CHECK
@@ -516,6 +537,7 @@ async def stream_video(file_name: str):
             headers={"Accept-Ranges": "bytes"}
         )
     return requests.get("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", stream=True).raw
+
 # =====================================================================
 # SECTION 8.3 ENROLLMENT & PROGRESS ENDPOINTS
 # =====================================================================
